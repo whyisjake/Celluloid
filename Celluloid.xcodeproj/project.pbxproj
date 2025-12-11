@@ -6,6 +6,10 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		F5FB212F2EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F5FB21252EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
 /* Begin PBXContainerItemProxy section */
 		F5FB20BC2EEB46DB00DC1D6E /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
@@ -21,12 +25,34 @@
 			remoteGlobalIDString = F5FB20AB2EEB46D800DC1D6E;
 			remoteInfo = Celluloid;
 		};
+		F5FB212D2EEB4D9000DC1D6E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = F5FB20A42EEB46D800DC1D6E /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F5FB21242EEB4D9000DC1D6E;
+			remoteInfo = CelluloidCameraExtension;
+		};
 /* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		F5FB21302EEB4D9000DC1D6E /* Embed Foundation Extensions */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = Contents/Library/SystemExtensions;
+			dstSubfolderSpec = 1;
+			files = (
+				F5FB212F2EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension in Embed Foundation Extensions */,
+			);
+			name = "Embed Foundation Extensions";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		F5FB20AC2EEB46D800DC1D6E /* Celluloid.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Celluloid.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		F5FB20BB2EEB46DB00DC1D6E /* CelluloidTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CelluloidTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F5FB20C52EEB46DB00DC1D6E /* CelluloidUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CelluloidUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F5FB21252EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = jakespurlock.Celluloid.CelluloidCameraExtension.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -43,6 +69,11 @@
 		F5FB20C82EEB46DB00DC1D6E /* CelluloidUITests */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			path = CelluloidUITests;
+			sourceTree = "<group>";
+		};
+		F5FB21262EEB4D9000DC1D6E /* CelluloidCameraExtension */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = CelluloidCameraExtension;
 			sourceTree = "<group>";
 		};
 /* End PBXFileSystemSynchronizedRootGroup section */
@@ -69,6 +100,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F5FB21222EEB4D9000DC1D6E /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -78,6 +116,7 @@
 				F5FB20AE2EEB46D800DC1D6E /* Celluloid */,
 				F5FB20BE2EEB46DB00DC1D6E /* CelluloidTests */,
 				F5FB20C82EEB46DB00DC1D6E /* CelluloidUITests */,
+				F5FB21262EEB4D9000DC1D6E /* CelluloidCameraExtension */,
 				F5FB20AD2EEB46D800DC1D6E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -88,6 +127,7 @@
 				F5FB20AC2EEB46D800DC1D6E /* Celluloid.app */,
 				F5FB20BB2EEB46DB00DC1D6E /* CelluloidTests.xctest */,
 				F5FB20C52EEB46DB00DC1D6E /* CelluloidUITests.xctest */,
+				F5FB21252EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -102,10 +142,12 @@
 				F5FB20A82EEB46D800DC1D6E /* Sources */,
 				F5FB20A92EEB46D800DC1D6E /* Frameworks */,
 				F5FB20AA2EEB46D800DC1D6E /* Resources */,
+				F5FB21302EEB4D9000DC1D6E /* Embed Foundation Extensions */,
 			);
 			buildRules = (
 			);
 			dependencies = (
+				F5FB212E2EEB4D9000DC1D6E /* PBXTargetDependency */,
 			);
 			fileSystemSynchronizedGroups = (
 				F5FB20AE2EEB46D800DC1D6E /* Celluloid */,
@@ -163,6 +205,28 @@
 			productReference = F5FB20C52EEB46DB00DC1D6E /* CelluloidUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
 		};
+		F5FB21242EEB4D9000DC1D6E /* CelluloidCameraExtension */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F5FB21342EEB4D9000DC1D6E /* Build configuration list for PBXNativeTarget "CelluloidCameraExtension" */;
+			buildPhases = (
+				F5FB21212EEB4D9000DC1D6E /* Sources */,
+				F5FB21222EEB4D9000DC1D6E /* Frameworks */,
+				F5FB21232EEB4D9000DC1D6E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			fileSystemSynchronizedGroups = (
+				F5FB21262EEB4D9000DC1D6E /* CelluloidCameraExtension */,
+			);
+			name = CelluloidCameraExtension;
+			packageProductDependencies = (
+			);
+			productName = CelluloidCameraExtension;
+			productReference = F5FB21252EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension */;
+			productType = "com.apple.product-type.system-extension";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -184,6 +248,9 @@
 						CreatedOnToolsVersion = 26.1.1;
 						TestTargetID = F5FB20AB2EEB46D800DC1D6E;
 					};
+					F5FB21242EEB4D9000DC1D6E = {
+						CreatedOnToolsVersion = 26.1.1;
+					};
 				};
 			};
 			buildConfigurationList = F5FB20A72EEB46D800DC1D6E /* Build configuration list for PBXProject "Celluloid" */;
@@ -203,6 +270,7 @@
 				F5FB20AB2EEB46D800DC1D6E /* Celluloid */,
 				F5FB20BA2EEB46DB00DC1D6E /* CelluloidTests */,
 				F5FB20C42EEB46DB00DC1D6E /* CelluloidUITests */,
+				F5FB21242EEB4D9000DC1D6E /* CelluloidCameraExtension */,
 			);
 		};
 /* End PBXProject section */
@@ -223,6 +291,13 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 		F5FB20C32EEB46DB00DC1D6E /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F5FB21232EEB4D9000DC1D6E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -253,6 +328,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		F5FB21212EEB4D9000DC1D6E /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -265,6 +347,11 @@
 			isa = PBXTargetDependency;
 			target = F5FB20AB2EEB46D800DC1D6E /* Celluloid */;
 			targetProxy = F5FB20C62EEB46DB00DC1D6E /* PBXContainerItemProxy */;
+		};
+		F5FB212E2EEB4D9000DC1D6E /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F5FB21242EEB4D9000DC1D6E /* CelluloidCameraExtension */;
+			targetProxy = F5FB212D2EEB4D9000DC1D6E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -394,15 +481,19 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Celluloid/Celluloid.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 36ERVRQ23S;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_CAMERA = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Celluloid needs camera access to apply real-time filters and adjustments to your webcam feed.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -426,15 +517,19 @@
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
+				CODE_SIGN_ENTITLEMENTS = Celluloid/Celluloid.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEVELOPMENT_TEAM = 36ERVRQ23S;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
+				ENABLE_CAMERA = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSCameraUsageDescription = "Celluloid needs camera access to apply real-time filters and adjustments to your webcam feed.";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -533,6 +628,70 @@
 			};
 			name = Release;
 		};
+		F5FB21312EEB4D9000DC1D6E /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CelluloidCameraExtension/CelluloidCameraExtension.entitlements;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				DEVELOPMENT_TEAM = 36ERVRQ23S;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CelluloidCameraExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CelluloidCameraExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jakespurlock.Celluloid.CelluloidCameraExtension;
+				PRODUCT_NAME = "$(inherited)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		F5FB21322EEB4D9000DC1D6E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_ENTITLEMENTS = CelluloidCameraExtension/CelluloidCameraExtension.entitlements;
+				CODE_SIGN_INJECT_BASE_ENTITLEMENTS = NO;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 19;
+				DEVELOPMENT_TEAM = 36ERVRQ23S;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = CelluloidCameraExtension/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = CelluloidCameraExtension;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@executable_path/../../../../Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = jakespurlock.Celluloid.CelluloidCameraExtension;
+				PRODUCT_NAME = "$(inherited)";
+				REGISTER_APP_GROUPS = YES;
+				SKIP_INSTALL = YES;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -568,6 +727,15 @@
 			buildConfigurations = (
 				F5FB20D62EEB46DB00DC1D6E /* Debug */,
 				F5FB20D72EEB46DB00DC1D6E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F5FB21342EEB4D9000DC1D6E /* Build configuration list for PBXNativeTarget "CelluloidCameraExtension" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F5FB21312EEB4D9000DC1D6E /* Debug */,
+				F5FB21322EEB4D9000DC1D6E /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
