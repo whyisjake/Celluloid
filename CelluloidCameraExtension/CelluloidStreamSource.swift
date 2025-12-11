@@ -8,7 +8,20 @@
 import Foundation
 import CoreMediaIO
 import CoreVideo
+import IOSurface
+import Security
 import os.log
+
+// Shared constants - must match main app
+struct CelluloidShared {
+    static let width = 1280
+    static let height = 720
+    static let bytesPerRow = width * 4
+    static let frameSize = bytesPerRow * height
+    // App Group for shared UserDefaults - must match entitlements
+    static let appGroupID = "36ERVRQ23S.com.jakespurlock.Celluloid"
+    static let surfaceIDKey = "IOSurfaceID"
+}
 
 class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
 
@@ -24,8 +37,9 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
     private var sequenceNumber: UInt64 = 0
     private var lastFrameTime = CMTime.zero
 
-    // App Group identifier - must match the main app
-    static let appGroupID = "36ERVRQ23S.com.jakespurlock.Celluloid"
+    // IOSurface for receiving frames from main app
+    private var sharedSurface: IOSurface?
+    private var lastKnownSurfaceID: IOSurfaceID = 0
 
     static let width = 1280
     static let height = 720
@@ -107,6 +121,9 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
 
         logger.info("Starting stream")
 
+        // Try to connect to IOSurface
+        connectToIOSurface()
+
         frameTimer = DispatchSource.makeTimerSource(queue: timerQueue)
         frameTimer?.schedule(deadline: .now(), repeating: 1.0 / Self.frameRate)
         frameTimer?.setEventHandler { [weak self] in
@@ -133,15 +150,67 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         try? stopStream()
     }
 
+    private func connectToIOSurface() {
+        var surfaceID: IOSurfaceID = 0
+
+        // Try reading from own preferences using UserDefaults.standard
+        // (which reads from the extension's own bundle ID preferences)
+        let standardSurfaceID = UserDefaults.standard.integer(forKey: CelluloidShared.surfaceIDKey)
+        if standardSurfaceID != 0 {
+            surfaceID = IOSurfaceID(standardSurfaceID)
+            logger.info("Read IOSurface ID \(surfaceID) from standard UserDefaults")
+        } else {
+            logger.info("Standard UserDefaults returned 0")
+        }
+
+        // Fallback to App Group UserDefaults
+        if surfaceID == 0 {
+            if let sharedDefaults = UserDefaults(suiteName: CelluloidShared.appGroupID) {
+                surfaceID = IOSurfaceID(sharedDefaults.integer(forKey: CelluloidShared.surfaceIDKey))
+                if surfaceID != 0 {
+                    logger.info("Read IOSurface ID \(surfaceID) from App Group UserDefaults")
+                } else {
+                    logger.info("App Group UserDefaults returned 0")
+                }
+            }
+        }
+
+        guard surfaceID != 0 else {
+            logger.info("No IOSurface ID available yet")
+            return
+        }
+
+        // Skip if we're already connected to this surface
+        if surfaceID == lastKnownSurfaceID && sharedSurface != nil {
+            return
+        }
+
+        logger.info("Attempting IOSurfaceLookup for ID: \(surfaceID)")
+
+        // Look up the IOSurface by ID
+        if let surface = IOSurfaceLookup(surfaceID) {
+            sharedSurface = surface
+            lastKnownSurfaceID = surfaceID
+            logger.info("Successfully connected to IOSurface!")
+        } else {
+            logger.warning("IOSurfaceLookup failed for ID: \(surfaceID)")
+        }
+    }
+
     private func generateFrame() {
         guard _isStreaming else { return }
 
         let currentTime = CMClockGetTime(CMClockGetHostTimeClock())
 
-        // Try to read frame from shared memory, otherwise generate test pattern
+        // Periodically try to connect to IOSurface if not connected
+        if sharedSurface == nil && sequenceNumber % 30 == 0 {
+            connectToIOSurface()
+        }
+
+        // Try to read frame from IOSurface, otherwise generate test pattern
         let pixelBuffer: CVPixelBuffer
-        if let sharedBuffer = readSharedFrame() {
-            pixelBuffer = sharedBuffer
+        if let ioSurfaceBuffer = readFromIOSurface() {
+            pixelBuffer = ioSurfaceBuffer
         } else {
             pixelBuffer = createTestPatternBuffer()
         }
@@ -183,41 +252,23 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         }
     }
 
-    private func readSharedFrame() -> CVPixelBuffer? {
-        // Use /tmp which sandboxed extensions can typically access
-        let dataURL = URL(fileURLWithPath: "/tmp/Celluloid/currentFrame.dat")
-
-        // Log every 30th frame attempt to reduce log spam
-        if sequenceNumber % 30 == 0 {
-            logger.info("Looking for frame at: \(dataURL.path, privacy: .public)")
-        }
-
-        guard FileManager.default.fileExists(atPath: dataURL.path) else {
+    private func readFromIOSurface() -> CVPixelBuffer? {
+        guard let surface = sharedSurface else {
             if sequenceNumber % 30 == 0 {
-                logger.warning("Frame file does not exist at: \(dataURL.path, privacy: .public)")
+                logger.info("No IOSurface connection")
             }
             return nil
         }
 
-        guard let data = try? Data(contentsOf: dataURL) else {
-            logger.error("Failed to read frame data")
-            return nil
-        }
+        // Lock the surface for reading
+        surface.lock(options: .readOnly, seed: nil)
+        defer { surface.unlock(options: .readOnly, seed: nil) }
 
-        if sequenceNumber % 30 == 0 {
-            logger.info("Read \(data.count) bytes from shared frame file")
-        }
+        let baseAddress = surface.baseAddress
 
-        let expectedSize = Self.width * Self.height * 4
-        guard data.count == expectedSize else {
-            logger.error("Frame size mismatch: got \(data.count), expected \(expectedSize)")
-            return nil
-        }
-
+        // Create a pixel buffer backed by IOSurface
         var pixelBuffer: CVPixelBuffer?
         let attrs: [CFString: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
             kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
         ]
 
@@ -231,33 +282,33 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         )
 
         guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+            logger.error("Failed to create pixel buffer: \(status)")
             return nil
         }
 
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
 
-        guard let baseAddress = CVPixelBufferGetBaseAddress(buffer) else {
+        guard let dstAddress = CVPixelBufferGetBaseAddress(buffer) else {
             return nil
         }
 
-        let bytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-        let srcBytesPerRow = Self.width * 4
+        let srcBytesPerRow = surface.bytesPerRow
+        let dstBytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
 
-        // Copy row by row to handle potential stride differences
-        data.withUnsafeBytes { srcPtr in
-            let src = srcPtr.baseAddress!.assumingMemoryBound(to: UInt8.self)
-            let dst = baseAddress.assumingMemoryBound(to: UInt8.self)
-
-            for row in 0..<Self.height {
-                let srcOffset = row * srcBytesPerRow
-                let dstOffset = row * bytesPerRow
-                memcpy(dst.advanced(by: dstOffset), src.advanced(by: srcOffset), srcBytesPerRow)
-            }
+        // Copy row by row to handle stride differences
+        for row in 0..<Self.height {
+            let srcOffset = row * srcBytesPerRow
+            let dstOffset = row * dstBytesPerRow
+            memcpy(
+                dstAddress.advanced(by: dstOffset),
+                baseAddress.advanced(by: srcOffset),
+                min(srcBytesPerRow, dstBytesPerRow)
+            )
         }
 
         if sequenceNumber % 30 == 0 {
-            logger.info("Successfully created pixel buffer from shared frame")
+            logger.info("Successfully read frame from IOSurface")
         }
 
         return buffer

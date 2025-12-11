@@ -25,6 +25,10 @@ class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDele
     override init() {
         super.init()
         checkForVirtualCamera()
+        // Auto-activate extension on launch to ensure latest version is installed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            self?.activateExtension()
+        }
     }
 
     func activateExtension() {

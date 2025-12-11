@@ -10,8 +10,20 @@ import CoreImage
 import SwiftUI
 import Combine
 import os.log
+import IOSurface
 
 private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "CameraManager")
+
+// Shared constants for frame sharing
+struct CelluloidShared {
+    static let width = 1280
+    static let height = 720
+    static let bytesPerRow = width * 4
+    static let frameSize = bytesPerRow * height
+    // App Group for shared UserDefaults - must match entitlements
+    static let appGroupID = "36ERVRQ23S.com.jakespurlock.Celluloid"
+    static let surfaceIDKey = "IOSurfaceID"
+}
 
 class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var currentFrame: CGImage?
@@ -35,10 +47,10 @@ class CameraManager: NSObject, ObservableObject {
     private let sessionQueue = DispatchQueue(label: "com.celluloid.sessionQueue")
     private let context = CIContext()
 
-    // Shared frame output for camera extension - use /tmp for system extension access
-    private static let outputWidth = 1280
-    private static let outputHeight = 720
-    private var sharedFrameURL: URL?
+    // IOSurface for sharing frames with the camera extension
+    private var sharedSurface: IOSurface?
+    private let surfaceQueue = DispatchQueue(label: "com.celluloid.surfaceQueue")
+    private var surfaceID: IOSurfaceID = 0
 
     enum FilterType: String, CaseIterable, Identifiable, Sendable {
         case none = "None"
@@ -70,7 +82,7 @@ class CameraManager: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        setupSharedFrameOutput()
+        setupIOSurface()
         Task { @MainActor in
             await checkPermission()
             loadAvailableCameras()
@@ -81,20 +93,57 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    private func setupSharedFrameOutput() {
-        // Use /tmp which sandboxed extensions can typically access
-        let sharedDir = URL(fileURLWithPath: "/tmp/Celluloid")
-        do {
-            try FileManager.default.createDirectory(at: sharedDir, withIntermediateDirectories: true)
-            // Make directory and file world-readable/writable
-            try FileManager.default.setAttributes([.posixPermissions: 0o777], ofItemAtPath: sharedDir.path)
-        } catch {
-            logger.error("Failed to create shared directory: \(error.localizedDescription, privacy: .public)")
+    // Static storage for CFMessagePort callback
+    private static var sharedSurfaceID: IOSurfaceID = 0
+
+    private func setupIOSurface() {
+        let properties: [IOSurfacePropertyKey: Any] = [
+            .width: CelluloidShared.width,
+            .height: CelluloidShared.height,
+            .bytesPerElement: 4,
+            .bytesPerRow: CelluloidShared.bytesPerRow,
+            .allocSize: CelluloidShared.frameSize,
+            .pixelFormat: kCVPixelFormatType_32BGRA
+        ]
+
+        guard let surface = IOSurface(properties: properties) else {
+            logger.error("Failed to create IOSurface")
+            return
         }
 
-        let frameURL = sharedDir.appendingPathComponent("currentFrame.dat")
-        sharedFrameURL = frameURL
-        logger.info("Shared frame URL: \(frameURL.path, privacy: .public)")
+        sharedSurface = surface
+        let newSurfaceID = IOSurfaceGetID(surface)
+        surfaceID = newSurfaceID
+        CameraManager.sharedSurfaceID = newSurfaceID
+
+        logger.info("Created IOSurface with ID: \(newSurfaceID)")
+
+        // Broadcast surface ID to extension via distributed notifications
+        broadcastSurfaceID()
+    }
+
+    private func broadcastSurfaceID() {
+        let currentSurfaceID = self.surfaceID
+
+        // Write to the extension's own preferences domain
+        // The extension should be able to read its own preferences
+        let extensionBundleID = "jakespurlock.Celluloid.CelluloidCameraExtension" as CFString
+        let key = CelluloidShared.surfaceIDKey as CFString
+
+        CFPreferencesSetValue(key, currentSurfaceID as CFNumber, extensionBundleID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
+
+        if CFPreferencesSynchronize(extensionBundleID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) {
+            logger.info("Wrote IOSurface ID \(currentSurfaceID) to extension's preferences")
+        } else {
+            logger.error("Failed to write to extension's preferences")
+        }
+
+        // Also write to App Group UserDefaults as backup
+        if let sharedDefaults = UserDefaults(suiteName: CelluloidShared.appGroupID) {
+            sharedDefaults.set(Int(currentSurfaceID), forKey: CelluloidShared.surfaceIDKey)
+            sharedDefaults.synchronize()
+            logger.info("Also wrote IOSurface ID \(currentSurfaceID) to App Group UserDefaults")
+        }
     }
 
     @MainActor
@@ -251,38 +300,34 @@ class CameraManager: NSObject, ObservableObject {
         return outputImage
     }
 
-    nonisolated private static func writeFrameToSharedContainer(_ cgImage: CGImage, url: URL) {
-        logger.info("Writing frame to shared container")
+    private func writeFrameToIOSurface(_ cgImage: CGImage) {
+        guard let surface = sharedSurface else { return }
 
-        // Scale to output size
-        let targetWidth = outputWidth
-        let targetHeight = outputHeight
+        surface.lock(options: [], seed: nil)
+        defer { surface.unlock(options: [], seed: nil) }
 
-        guard let colorSpace = cgImage.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
+        let baseAddress = surface.baseAddress
+        let targetWidth = CelluloidShared.width
+        let targetHeight = CelluloidShared.height
+        let bytesPerRow = surface.bytesPerRow
+
+        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
               let context = CGContext(
-                data: nil,
+                data: baseAddress,
                 width: targetWidth,
                 height: targetHeight,
                 bitsPerComponent: 8,
-                bytesPerRow: targetWidth * 4,
+                bytesPerRow: bytesPerRow,
                 space: colorSpace,
                 bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
               ) else {
+            logger.error("Failed to create CGContext for IOSurface")
             return
         }
 
         context.interpolationQuality = .high
         context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-
-        guard let data = context.data else { return }
-
-        let frameData = Data(bytes: data, count: targetWidth * targetHeight * 4)
-
-        do {
-            try frameData.write(to: url, options: .atomic)
-        } catch {
-            logger.error("Failed to write frame to \(url.path): \(error.localizedDescription, privacy: .public)")
-        }
+        // Frame is now available in the IOSurface - extension polls for it
     }
 }
 
@@ -302,11 +347,9 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             if let cgImage = self.context.createCGImage(processedImage, from: processedImage.extent) {
                 self.currentFrame = cgImage
 
-                // Write to shared container for camera extension
-                if let frameURL = self.sharedFrameURL {
-                    Task.detached {
-                        CameraManager.writeFrameToSharedContainer(cgImage, url: frameURL)
-                    }
+                // Write to IOSurface for camera extension
+                self.surfaceQueue.async { [weak self] in
+                    self?.writeFrameToIOSurface(cgImage)
                 }
             }
         }
