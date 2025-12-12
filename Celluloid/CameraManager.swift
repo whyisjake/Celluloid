@@ -30,7 +30,7 @@ struct HALDConstants {
 // MARK: - LUT Info
 struct LUTInfo: Hashable, Identifiable {
     let name: String
-    let subdirectory: String?  // nil for root LUT_pack, otherwise subdirectory path
+    let subdirectory: String?  // Subdirectory path relative to bundle resources (e.g., "LUT_pack" or "LUT_pack/Film Presets")
     let fileExtension: String  // "cube" or "png"
     
     var id: String { name }
