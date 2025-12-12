@@ -197,6 +197,13 @@ struct AdjustmentsSection: View {
                 range: 2000...10000,
                 icon: "thermometer"
             )
+
+            AdjustmentSlider(
+                title: "Sharpness",
+                value: $cameraManager.sharpness,
+                range: 0.0...2.0,
+                icon: "triangle"
+            )
         }
     }
 }

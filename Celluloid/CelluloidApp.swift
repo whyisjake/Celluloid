@@ -12,11 +12,10 @@ struct CelluloidApp: App {
     @StateObject private var cameraManager = CameraManager()
 
     var body: some Scene {
-        WindowGroup {
+        MenuBarExtra("Celluloid", systemImage: "camera.filters") {
             ContentView()
                 .environmentObject(cameraManager)
         }
-        .windowStyle(.hiddenTitleBar)
-        .windowResizability(.contentSize)
+        .menuBarExtraStyle(.window)
     }
 }

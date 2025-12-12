@@ -10,19 +10,14 @@ import CoreImage
 import SwiftUI
 import Combine
 import os.log
-import IOSurface
+import CoreMediaIO
 
 private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "CameraManager")
 
-// Shared constants for frame sharing
+// Shared constants for frame format
 struct CelluloidShared {
     static let width = 1280
     static let height = 720
-    static let bytesPerRow = width * 4
-    static let frameSize = bytesPerRow * height
-    // App Group for shared UserDefaults - must match entitlements
-    static let appGroupID = "36ERVRQ23S.com.jakespurlock.Celluloid"
-    static let surfaceIDKey = "IOSurfaceID"
 }
 
 class CameraManager: NSObject, ObservableObject {
@@ -38,6 +33,7 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var saturation: Double = 1.0  // 0.0 to 2.0
     @MainActor @Published var exposure: Double = 0.0    // -2.0 to 2.0
     @MainActor @Published var temperature: Double = 6500 // 2000 to 10000 (Kelvin)
+    @MainActor @Published var sharpness: Double = 0.0    // 0.0 to 2.0
 
     // Filter
     @MainActor @Published var selectedFilter: FilterType = .none
@@ -47,10 +43,13 @@ class CameraManager: NSObject, ObservableObject {
     private let sessionQueue = DispatchQueue(label: "com.celluloid.sessionQueue")
     private let context = CIContext()
 
-    // IOSurface for sharing frames with the camera extension
-    private var sharedSurface: IOSurface?
-    private let surfaceQueue = DispatchQueue(label: "com.celluloid.surfaceQueue")
-    private var surfaceID: IOSurfaceID = 0
+    // CoreMediaIO sink stream for sending frames to the camera extension
+    private var sinkStreamID: CMIOStreamID = 0
+    private var sinkDeviceID: CMIODeviceID = 0
+    private var sinkQueue: CMSimpleQueue?
+    private var isConnectedToSinkStream = false
+    private var readyToEnqueue = false
+    private let sinkConnectionQueue = DispatchQueue(label: "com.celluloid.sinkConnection")
 
     enum FilterType: String, CaseIterable, Identifiable, Sendable {
         case none = "None"
@@ -82,67 +81,12 @@ class CameraManager: NSObject, ObservableObject {
 
     override init() {
         super.init()
-        setupIOSurface()
         Task { @MainActor in
             await checkPermission()
             loadAvailableCameras()
-            // Auto-start camera if permission is granted
             if permissionGranted {
                 startSession()
             }
-        }
-    }
-
-    // Static storage for CFMessagePort callback
-    private static var sharedSurfaceID: IOSurfaceID = 0
-
-    private func setupIOSurface() {
-        let properties: [IOSurfacePropertyKey: Any] = [
-            .width: CelluloidShared.width,
-            .height: CelluloidShared.height,
-            .bytesPerElement: 4,
-            .bytesPerRow: CelluloidShared.bytesPerRow,
-            .allocSize: CelluloidShared.frameSize,
-            .pixelFormat: kCVPixelFormatType_32BGRA
-        ]
-
-        guard let surface = IOSurface(properties: properties) else {
-            logger.error("Failed to create IOSurface")
-            return
-        }
-
-        sharedSurface = surface
-        let newSurfaceID = IOSurfaceGetID(surface)
-        surfaceID = newSurfaceID
-        CameraManager.sharedSurfaceID = newSurfaceID
-
-        logger.info("Created IOSurface with ID: \(newSurfaceID)")
-
-        // Broadcast surface ID to extension via distributed notifications
-        broadcastSurfaceID()
-    }
-
-    private func broadcastSurfaceID() {
-        let currentSurfaceID = self.surfaceID
-
-        // Write to the extension's own preferences domain
-        // The extension should be able to read its own preferences
-        let extensionBundleID = "jakespurlock.Celluloid.CelluloidCameraExtension" as CFString
-        let key = CelluloidShared.surfaceIDKey as CFString
-
-        CFPreferencesSetValue(key, currentSurfaceID as CFNumber, extensionBundleID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost)
-
-        if CFPreferencesSynchronize(extensionBundleID, kCFPreferencesCurrentUser, kCFPreferencesAnyHost) {
-            logger.info("Wrote IOSurface ID \(currentSurfaceID) to extension's preferences")
-        } else {
-            logger.error("Failed to write to extension's preferences")
-        }
-
-        // Also write to App Group UserDefaults as backup
-        if let sharedDefaults = UserDefaults(suiteName: CelluloidShared.appGroupID) {
-            sharedDefaults.set(Int(currentSurfaceID), forKey: CelluloidShared.surfaceIDKey)
-            sharedDefaults.synchronize()
-            logger.info("Also wrote IOSurface ID \(currentSurfaceID) to App Group UserDefaults")
         }
     }
 
@@ -194,7 +138,7 @@ class CameraManager: NSObject, ObservableObject {
                     self.captureSession.addInput(input)
                 }
             } catch {
-                print("Error setting up camera input: \(error)")
+                logger.error("Error setting up camera input: \(error.localizedDescription)")
                 return
             }
 
@@ -210,6 +154,9 @@ class CameraManager: NSObject, ObservableObject {
 
             self.captureSession.commitConfiguration()
             self.captureSession.startRunning()
+
+            // Connect to the virtual camera's sink stream
+            self.connectToSinkStream()
 
             Task { @MainActor in
                 self.isRunning = true
@@ -246,6 +193,7 @@ class CameraManager: NSObject, ObservableObject {
         saturation = 1.0
         exposure = 0.0
         temperature = 6500
+        sharpness = 0.0
         selectedFilter = .none
     }
 
@@ -288,6 +236,17 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
 
+        // Apply sharpness adjustment
+        if sharpness > 0 {
+            if let sharpenFilter = CIFilter(name: "CISharpenLuminance") {
+                sharpenFilter.setValue(outputImage, forKey: kCIInputImageKey)
+                sharpenFilter.setValue(sharpness, forKey: kCIInputSharpnessKey)
+                if let result = sharpenFilter.outputImage {
+                    outputImage = result
+                }
+            }
+        }
+
         // Apply photo effect filter
         if let filterName = selectedFilter.ciFilterName,
            let photoFilter = CIFilter(name: filterName) {
@@ -300,43 +259,302 @@ class CameraManager: NSObject, ObservableObject {
         return outputImage
     }
 
-    private func writeFrameToIOSurface(_ cgImage: CGImage) {
-        guard let surface = sharedSurface else { return }
+    // MARK: - CoreMediaIO Sink Stream Connection
 
-        surface.lock(options: [], seed: nil)
-        defer { surface.unlock(options: [], seed: nil) }
+    private func connectToSinkStream() {
+        sinkConnectionQueue.async { [weak self] in
+            self?.performSinkStreamConnection()
+        }
+    }
 
-        let baseAddress = surface.baseAddress
-        let targetWidth = CelluloidShared.width
-        let targetHeight = CelluloidShared.height
-        let bytesPerRow = surface.bytesPerRow
+    private func performSinkStreamConnection() {
+        // Allow apps to access camera extensions
+        var allow: UInt32 = 1
+        var propAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyAllowScreenCaptureDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        CMIOObjectSetPropertyData(
+            CMIOObjectID(kCMIOObjectSystemObject),
+            &propAddress,
+            0,
+            nil,
+            UInt32(MemoryLayout<UInt32>.size),
+            &allow
+        )
 
-        guard let colorSpace = CGColorSpace(name: CGColorSpace.sRGB),
-              let context = CGContext(
-                data: baseAddress,
-                width: targetWidth,
-                height: targetHeight,
-                bitsPerComponent: 8,
-                bytesPerRow: bytesPerRow,
-                space: colorSpace,
-                bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-              ) else {
-            logger.error("Failed to create CGContext for IOSurface")
+        // Get all devices
+        var dataSize: UInt32 = 0
+        var devicesAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+
+        var status = CMIOObjectGetPropertyDataSize(
+            CMIOObjectID(kCMIOObjectSystemObject),
+            &devicesAddress,
+            0,
+            nil,
+            &dataSize
+        )
+
+        guard status == noErr else {
+            logger.error("Failed to get devices data size: \(status)")
             return
         }
 
+        let deviceCount = Int(dataSize) / MemoryLayout<CMIODeviceID>.size
+        var deviceIDs = [CMIODeviceID](repeating: 0, count: deviceCount)
+
+        status = CMIOObjectGetPropertyData(
+            CMIOObjectID(kCMIOObjectSystemObject),
+            &devicesAddress,
+            0,
+            nil,
+            dataSize,
+            &dataSize,
+            &deviceIDs
+        )
+
+        guard status == noErr else {
+            logger.error("Failed to get devices: \(status)")
+            return
+        }
+
+        logger.info("Found \(deviceCount) CMIO devices")
+
+        // Find Celluloid Camera device
+        for deviceID in deviceIDs {
+            if let name = getDeviceName(deviceID), name.contains("Celluloid") {
+                logger.info("Found Celluloid Camera device: \(name)")
+                findSinkStream(for: deviceID)
+                return
+            }
+        }
+
+        logger.info("Celluloid Camera device not found - extension may not be loaded")
+    }
+
+    private func getDeviceName(_ deviceID: CMIODeviceID) -> String? {
+        var nameAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOObjectPropertyName),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+
+        var name: CFString?
+        var dataSize = UInt32(MemoryLayout<CFString?>.size)
+
+        let status = CMIOObjectGetPropertyData(
+            deviceID,
+            &nameAddress,
+            0,
+            nil,
+            dataSize,
+            &dataSize,
+            &name
+        )
+
+        guard status == noErr, let deviceName = name else {
+            return nil
+        }
+
+        return deviceName as String
+    }
+
+    private func findSinkStream(for deviceID: CMIODeviceID) {
+        self.sinkDeviceID = deviceID
+
+        var streamsAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyStreams),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+
+        var dataSize: UInt32 = 0
+        var status = CMIOObjectGetPropertyDataSize(deviceID, &streamsAddress, 0, nil, &dataSize)
+
+        guard status == noErr else {
+            logger.error("Failed to get streams data size: \(status)")
+            return
+        }
+
+        let streamCount = Int(dataSize) / MemoryLayout<CMIOStreamID>.size
+        var streamIDs = [CMIOStreamID](repeating: 0, count: streamCount)
+
+        status = CMIOObjectGetPropertyData(deviceID, &streamsAddress, 0, nil, dataSize, &dataSize, &streamIDs)
+
+        guard status == noErr else {
+            logger.error("Failed to get streams: \(status)")
+            return
+        }
+
+        logger.info("Found \(streamCount) streams for Celluloid device")
+
+        // Find the sink stream by name "Input"
+        for streamID in streamIDs {
+            if let name = getStreamName(streamID), name.contains("Input") {
+                logger.info("Found sink stream: \(name)")
+                connectToStream(streamID)
+                return
+            }
+        }
+
+        logger.warning("No sink stream found on Celluloid device")
+    }
+
+    private func getStreamName(_ streamID: CMIOStreamID) -> String? {
+        var nameAddress = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOObjectPropertyName),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+
+        var name: CFString?
+        var dataSize = UInt32(MemoryLayout<CFString?>.size)
+
+        let status = CMIOObjectGetPropertyData(streamID, &nameAddress, 0, nil, dataSize, &dataSize, &name)
+
+        guard status == noErr, let streamName = name else {
+            return nil
+        }
+
+        return streamName as String
+    }
+
+    private func connectToStream(_ streamID: CMIOStreamID) {
+        self.sinkStreamID = streamID
+
+        let refCon = Unmanaged.passUnretained(self).toOpaque()
+        var queue: Unmanaged<CMSimpleQueue>?
+
+        let status = CMIOStreamCopyBufferQueue(
+            streamID,
+            { (streamID: CMIOStreamID, token: UnsafeMutableRawPointer?, refcon: UnsafeMutableRawPointer?) in
+                guard let refcon = refcon else { return }
+                let manager = Unmanaged<CameraManager>.fromOpaque(refcon).takeUnretainedValue()
+                manager.readyToEnqueue = true
+            },
+            refCon,
+            &queue
+        )
+
+        if status == noErr, let simpleQueue = queue?.takeRetainedValue() {
+            self.sinkQueue = simpleQueue
+
+            let startStatus = CMIODeviceStartStream(sinkDeviceID, streamID)
+
+            if startStatus == noErr {
+                self.isConnectedToSinkStream = true
+                self.readyToEnqueue = true
+                logger.info("Connected to sink stream")
+            } else {
+                logger.error("Failed to start sink stream: \(startStatus)")
+            }
+        } else {
+            logger.error("Failed to get buffer queue: \(status)")
+        }
+    }
+
+    private var framesSentCount = 0
+
+    private func sendFrameToSinkStream(_ sampleBuffer: CMSampleBuffer) {
+        guard isConnectedToSinkStream, let queue = sinkQueue else {
+            if !isConnectedToSinkStream {
+                connectToSinkStream()
+            }
+            return
+        }
+
+        guard readyToEnqueue else { return }
+
+        readyToEnqueue = false
+
+        let enqueueStatus = CMSimpleQueueEnqueue(queue, element: Unmanaged.passRetained(sampleBuffer).toOpaque())
+        if enqueueStatus != noErr {
+            logger.error("Failed to enqueue buffer: \(enqueueStatus)")
+            readyToEnqueue = true
+        } else {
+            framesSentCount += 1
+        }
+    }
+
+    private func createSampleBuffer(from cgImage: CGImage) -> CMSampleBuffer? {
+        let width = CelluloidShared.width
+        let height = CelluloidShared.height
+
+        var pixelBuffer: CVPixelBuffer?
+        let attrs: [CFString: Any] = [
+            kCVPixelBufferCGImageCompatibilityKey: true,
+            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
+        ]
+
+        let status = CVPixelBufferCreate(
+            kCFAllocatorDefault,
+            width,
+            height,
+            kCVPixelFormatType_32BGRA,
+            attrs as CFDictionary,
+            &pixelBuffer
+        )
+
+        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+            return nil
+        }
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+
+        guard let context = CGContext(
+            data: CVPixelBufferGetBaseAddress(buffer),
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else {
+            return nil
+        }
+
         context.interpolationQuality = .high
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: targetWidth, height: targetHeight))
-        // Frame is now available in the IOSurface - extension polls for it
+        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        var formatDescription: CMFormatDescription?
+        CMVideoFormatDescriptionCreateForImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: buffer,
+            formatDescriptionOut: &formatDescription
+        )
+
+        guard let format = formatDescription else { return nil }
+
+        let currentTime = CMClockGetTime(CMClockGetHostTimeClock())
+        var timingInfo = CMSampleTimingInfo(
+            duration: CMTime(value: 1, timescale: 30),
+            presentationTimeStamp: currentTime,
+            decodeTimeStamp: .invalid
+        )
+
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: buffer,
+            formatDescription: format,
+            sampleTiming: &timingInfo,
+            sampleBufferOut: &sampleBuffer
+        )
+
+        return sampleBuffer
     }
 }
 
 extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
     nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            logger.error("No pixel buffer in sample buffer")
-            return
-        }
+        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
 
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
 
@@ -347,9 +565,11 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
             if let cgImage = self.context.createCGImage(processedImage, from: processedImage.extent) {
                 self.currentFrame = cgImage
 
-                // Write to IOSurface for camera extension
-                self.surfaceQueue.async { [weak self] in
-                    self?.writeFrameToIOSurface(cgImage)
+                self.sinkConnectionQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    if let sampleBuffer = self.createSampleBuffer(from: cgImage) {
+                        self.sendFrameToSinkStream(sampleBuffer)
+                    }
                 }
             }
         }

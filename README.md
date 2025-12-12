@@ -1,66 +1,63 @@
 # Celluloid
 
-A lightweight macOS menu bar app that adds real-time filters and adjustments to your webcam feed, outputting to a virtual camera for use in any video conferencing app.
+A macOS virtual camera app that captures your webcam feed, applies real-time filters, and outputs to a virtual camera for use in video conferencing apps like Zoom, Google Meet, and FaceTime.
 
 ## Features
 
-### Real-time Adjustments
-- **Brightness** - Lighten or darken your image (-1.0 to 1.0)
-- **Contrast** - Adjust the difference between light and dark areas (0.25 to 4.0)
-- **Saturation** - Control color intensity (0.0 to 2.0)
-- **Exposure** - Simulate camera exposure compensation (-2.0 to 2.0 EV)
-- **Temperature** - Warm up or cool down your image (2000K to 10000K)
+- Real-time camera filters (Noir, Chrome, Fade, Instant, Mono, etc.)
+- Adjustable brightness, contrast, saturation, exposure, and color temperature
+- Works with any app that supports camera input
+- Menubar app for easy access
 
-### Filters
-- **None** - Original camera feed
-- **Noir** - Classic black and white film look
-- **Chrome** - Vintage chrome processing
-- **Fade** - Soft, faded aesthetic
-- **Instant** - Polaroid-style instant film
-- **Mono** - Clean monochrome
-- **Process** - Cross-processed film effect
-- **Tonal** - High-contrast black and white
-- **Transfer** - Vintage transfer print look
+## Architecture
 
-### Virtual Camera
-Celluloid installs a system camera extension that appears as "Celluloid Camera" in any app that uses video input - Zoom, Google Meet, FaceTime, OBS, and more.
+```
+┌─────────────────────┐                        ┌──────────────────────────┐
+│   Celluloid App     │                        │   CMIO Extension         │
+│                     │   CoreMediaIO          │                          │
+│  - Captures camera  │   Sink Stream          │  Sink Stream (input)     │
+│  - Applies filters  │ ──────────────────────▶│         │                │
+│  - Sends to sink    │                        │         ▼                │
+│                     │                        │  Source Stream (output)  │
+│                     │                        │         │                │
+└─────────────────────┘                        │         ▼                │
+                                               │  Video Apps (Zoom, etc)  │
+                                               └──────────────────────────┘
+```
 
 ## Requirements
 
 - macOS 13.0 or later
-- Apple Silicon or Intel Mac
 - Camera access permission
 
 ## Installation
 
-1. Download Celluloid.app
-2. Move to /Applications folder (required for system extension)
-3. Launch and grant camera permission
-4. Click "Install" to enable the virtual camera
-5. Approve the system extension in System Settings > Privacy & Security
+1. Build the project in Xcode
+2. Move Celluloid.app to /Applications
+3. Launch the app and approve the system extension when prompted
+4. Select "Celluloid Camera" in your video app's camera settings
 
-## Usage
+## Future Enhancements
 
-1. Launch Celluloid from Applications
-2. Select your input camera from the dropdown
-3. Adjust sliders and select filters to taste
-4. In your video app (Zoom, Meet, etc.), select "Celluloid Camera" as your camera source
+### Performance Optimizations
 
-## Architecture
+1. **Skip CGImage conversion** - Render CIImage directly to CVPixelBuffer instead of going through CGImage, eliminating an intermediate conversion step.
 
-Celluloid consists of two components:
+2. **CVPixelBufferPool** - Reuse pixel buffers from a pool instead of creating new ones each frame, reducing memory allocation overhead.
 
-1. **Main App** - Captures video from your physical camera, applies Core Image filters, and writes processed frames to a shared location
-2. **Camera Extension** - A CMIOExtension system extension that reads processed frames and presents them as a virtual camera device
+3. **IOSurface-backed buffers** - Use IOSurface for zero-copy frame transfer between the app and extension, avoiding memory copies entirely.
 
-## Development
+4. **Metal rendering** - Use Metal/GPU for filter processing instead of CPU-based Core Image rendering for better performance on complex filters.
 
-Built with:
-- SwiftUI for the interface
-- AVFoundation for camera capture
-- Core Image for real-time filtering
-- CMIOExtension for virtual camera output
+### Feature Ideas
+
+- Custom LUT (Look-Up Table) support for advanced color grading
+- Face tracking and background blur
+- Virtual backgrounds
+- Recording/snapshot capability
+- Preset management for filter combinations
+- Keyboard shortcuts for quick filter switching
 
 ## License
 
-MIT License - See LICENSE file for details
+MIT

@@ -8,20 +8,7 @@
 import Foundation
 import CoreMediaIO
 import CoreVideo
-import IOSurface
-import Security
 import os.log
-
-// Shared constants - must match main app
-struct CelluloidShared {
-    static let width = 1280
-    static let height = 720
-    static let bytesPerRow = width * 4
-    static let frameSize = bytesPerRow * height
-    // App Group for shared UserDefaults - must match entitlements
-    static let appGroupID = "36ERVRQ23S.com.jakespurlock.Celluloid"
-    static let surfaceIDKey = "IOSurfaceID"
-}
 
 class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
 
@@ -35,11 +22,17 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
     private let timerQueue = DispatchQueue(label: "com.celluloid.frameTimer", qos: .userInteractive)
 
     private var sequenceNumber: UInt64 = 0
-    private var lastFrameTime = CMTime.zero
 
-    // IOSurface for receiving frames from main app
-    private var sharedSurface: IOSurface?
-    private var lastKnownSurfaceID: IOSurfaceID = 0
+    // Buffer received from sink stream (from container app)
+    private var receivedBuffer: CMSampleBuffer?
+    private let bufferLock = NSLock()
+    private var receivedBufferCount = 0
+
+    // Reference to sink stream to trigger consumption when source starts
+    weak var sinkStream: CelluloidSinkStreamSource?
+
+    // Cache last good pixel buffer for smooth playback
+    private var lastGoodPixelBuffer: CVPixelBuffer?
 
     static let width = 1280
     static let height = 720
@@ -83,23 +76,17 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
     var activeFormatIndex: Int = 0
 
     var availableProperties: Set<CMIOExtensionProperty> {
-        return [
-            .streamActiveFormatIndex,
-            .streamFrameDuration
-        ]
+        return [.streamActiveFormatIndex, .streamFrameDuration]
     }
 
     func streamProperties(forProperties properties: Set<CMIOExtensionProperty>) throws -> CMIOExtensionStreamProperties {
         let streamProperties = CMIOExtensionStreamProperties(dictionary: [:])
-
         if properties.contains(.streamActiveFormatIndex) {
             streamProperties.activeFormatIndex = 0
         }
-
         if properties.contains(.streamFrameDuration) {
             streamProperties.frameDuration = CMTime(value: 1, timescale: CMTimeScale(Self.frameRate))
         }
-
         return streamProperties
     }
 
@@ -110,6 +97,8 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
     }
 
     func authorizedToStartStream(for client: CMIOExtensionClient) -> Bool {
+        logger.info("Source stream authorized - triggering sink consumption")
+        sinkStream?.triggerConsumption(for: client)
         return true
     }
 
@@ -117,12 +106,8 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         guard !_isStreaming else { return }
         _isStreaming = true
         sequenceNumber = 0
-        lastFrameTime = CMClockGetTime(CMClockGetHostTimeClock())
 
         logger.info("Starting stream")
-
-        // Try to connect to IOSurface
-        connectToIOSurface()
 
         frameTimer = DispatchSource.makeTimerSource(queue: timerQueue)
         frameTimer?.schedule(deadline: .now(), repeating: 1.0 / Self.frameRate)
@@ -135,9 +120,7 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
     func stopStream() throws {
         guard _isStreaming else { return }
         _isStreaming = false
-
         logger.info("Stopping stream")
-
         frameTimer?.cancel()
         frameTimer = nil
     }
@@ -150,51 +133,32 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         try? stopStream()
     }
 
-    private func connectToIOSurface() {
-        var surfaceID: IOSurfaceID = 0
+    // MARK: - Receiving frames from sink stream
 
-        // Try reading from own preferences using UserDefaults.standard
-        // (which reads from the extension's own bundle ID preferences)
-        let standardSurfaceID = UserDefaults.standard.integer(forKey: CelluloidShared.surfaceIDKey)
-        if standardSurfaceID != 0 {
-            surfaceID = IOSurfaceID(standardSurfaceID)
-            logger.info("Read IOSurface ID \(surfaceID) from standard UserDefaults")
-        } else {
-            logger.info("Standard UserDefaults returned 0")
+    func enqueueReceivedBuffer(_ buffer: CMSampleBuffer) {
+        bufferLock.lock()
+        receivedBuffer = buffer
+        receivedBufferCount += 1
+        bufferLock.unlock()
+
+        if receivedBufferCount % 30 == 0 {
+            logger.info("Received \(self.receivedBufferCount) buffers from container app")
         }
+    }
 
-        // Fallback to App Group UserDefaults
-        if surfaceID == 0 {
-            if let sharedDefaults = UserDefaults(suiteName: CelluloidShared.appGroupID) {
-                surfaceID = IOSurfaceID(sharedDefaults.integer(forKey: CelluloidShared.surfaceIDKey))
-                if surfaceID != 0 {
-                    logger.info("Read IOSurface ID \(surfaceID) from App Group UserDefaults")
-                } else {
-                    logger.info("App Group UserDefaults returned 0")
-                }
+    private func dequeueReceivedPixelBuffer() -> CVPixelBuffer? {
+        bufferLock.lock()
+        if let buffer = receivedBuffer {
+            if let pixelBuffer = CMSampleBufferGetImageBuffer(buffer) {
+                lastGoodPixelBuffer = pixelBuffer
             }
+            receivedBuffer = nil
+            bufferLock.unlock()
+            return lastGoodPixelBuffer
         }
-
-        guard surfaceID != 0 else {
-            logger.info("No IOSurface ID available yet")
-            return
-        }
-
-        // Skip if we're already connected to this surface
-        if surfaceID == lastKnownSurfaceID && sharedSurface != nil {
-            return
-        }
-
-        logger.info("Attempting IOSurfaceLookup for ID: \(surfaceID)")
-
-        // Look up the IOSurface by ID
-        if let surface = IOSurfaceLookup(surfaceID) {
-            sharedSurface = surface
-            lastKnownSurfaceID = surfaceID
-            logger.info("Successfully connected to IOSurface!")
-        } else {
-            logger.warning("IOSurfaceLookup failed for ID: \(surfaceID)")
-        }
+        let pixelBuffer = lastGoodPixelBuffer
+        bufferLock.unlock()
+        return pixelBuffer
     }
 
     private func generateFrame() {
@@ -202,117 +166,46 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
 
         let currentTime = CMClockGetTime(CMClockGetHostTimeClock())
 
-        // Periodically try to connect to IOSurface if not connected
-        if sharedSurface == nil && sequenceNumber % 30 == 0 {
-            connectToIOSurface()
-        }
-
-        // Try to read frame from IOSurface, otherwise generate test pattern
         let pixelBuffer: CVPixelBuffer
-        if let ioSurfaceBuffer = readFromIOSurface() {
-            pixelBuffer = ioSurfaceBuffer
+        if let sinkBuffer = dequeueReceivedPixelBuffer() {
+            pixelBuffer = sinkBuffer
         } else {
             pixelBuffer = createTestPatternBuffer()
         }
 
         guard let formatDescription = CMFormatDescription.forPixelBuffer(pixelBuffer) else {
-            logger.error("Failed to create format description")
             return
         }
 
-        let timing = CMSampleTimingInfo(
+        var timingInfo = CMSampleTimingInfo(
             duration: CMTime(value: 1, timescale: CMTimeScale(Self.frameRate)),
             presentationTimeStamp: currentTime,
             decodeTimeStamp: .invalid
         )
 
-        do {
-            var sampleBuffer: CMSampleBuffer?
-            var timingInfo = timing
-            CMSampleBufferCreateReadyWithImageBuffer(
-                allocator: kCFAllocatorDefault,
-                imageBuffer: pixelBuffer,
-                formatDescription: formatDescription,
-                sampleTiming: &timingInfo,
-                sampleBufferOut: &sampleBuffer
-            )
-
-            guard let buffer = sampleBuffer else {
-                logger.error("Failed to create sample buffer")
-                return
-            }
-
-            stream.send(
-                buffer,
-                discontinuity: [],
-                hostTimeInNanoseconds: UInt64(currentTime.seconds * Double(NSEC_PER_SEC))
-            )
-
-            sequenceNumber += 1
-        }
-    }
-
-    private func readFromIOSurface() -> CVPixelBuffer? {
-        guard let surface = sharedSurface else {
-            if sequenceNumber % 30 == 0 {
-                logger.info("No IOSurface connection")
-            }
-            return nil
-        }
-
-        // Lock the surface for reading
-        surface.lock(options: .readOnly, seed: nil)
-        defer { surface.unlock(options: .readOnly, seed: nil) }
-
-        let baseAddress = surface.baseAddress
-
-        // Create a pixel buffer backed by IOSurface
-        var pixelBuffer: CVPixelBuffer?
-        let attrs: [CFString: Any] = [
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
-        ]
-
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            Self.width,
-            Self.height,
-            kCVPixelFormatType_32BGRA,
-            attrs as CFDictionary,
-            &pixelBuffer
+        var sampleBuffer: CMSampleBuffer?
+        CMSampleBufferCreateReadyWithImageBuffer(
+            allocator: kCFAllocatorDefault,
+            imageBuffer: pixelBuffer,
+            formatDescription: formatDescription,
+            sampleTiming: &timingInfo,
+            sampleBufferOut: &sampleBuffer
         )
 
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
-            logger.error("Failed to create pixel buffer: \(status)")
-            return nil
-        }
+        guard let buffer = sampleBuffer else { return }
 
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        stream.send(
+            buffer,
+            discontinuity: [],
+            hostTimeInNanoseconds: UInt64(currentTime.seconds * Double(NSEC_PER_SEC))
+        )
 
-        guard let dstAddress = CVPixelBufferGetBaseAddress(buffer) else {
-            return nil
-        }
-
-        let srcBytesPerRow = surface.bytesPerRow
-        let dstBytesPerRow = CVPixelBufferGetBytesPerRow(buffer)
-
-        // Copy row by row to handle stride differences
-        for row in 0..<Self.height {
-            let srcOffset = row * srcBytesPerRow
-            let dstOffset = row * dstBytesPerRow
-            memcpy(
-                dstAddress.advanced(by: dstOffset),
-                baseAddress.advanced(by: srcOffset),
-                min(srcBytesPerRow, dstBytesPerRow)
-            )
-        }
-
-        if sequenceNumber % 30 == 0 {
-            logger.info("Successfully read frame from IOSurface")
-        }
-
-        return buffer
+        sequenceNumber += 1
     }
+
+    // MARK: - Test Pattern
+
+    private static let extensionVersion = "V45"
 
     private func createTestPatternBuffer() -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
@@ -343,16 +236,10 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         let height = CVPixelBufferGetHeight(buffer)
         let width = CVPixelBufferGetWidth(buffer)
 
-        // Generate color bars test pattern
+        // Color bars
         let colors: [(UInt8, UInt8, UInt8, UInt8)] = [
-            (255, 255, 255, 255), // White
-            (255, 255, 0, 255),   // Yellow
-            (0, 255, 255, 255),   // Cyan
-            (0, 255, 0, 255),     // Green
-            (255, 0, 255, 255),   // Magenta
-            (255, 0, 0, 255),     // Red
-            (0, 0, 255, 255),     // Blue
-            (0, 0, 0, 255)        // Black
+            (255, 255, 255, 255), (255, 255, 0, 255), (0, 255, 255, 255), (0, 255, 0, 255),
+            (255, 0, 255, 255), (255, 0, 0, 255), (0, 0, 255, 255), (0, 0, 0, 255)
         ]
 
         let barWidth = width / colors.count
@@ -363,31 +250,60 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
                 let colorIndex = min(x / barWidth, colors.count - 1)
                 let color = colors[colorIndex]
                 let pixel = rowStart.advanced(by: x * 4).assumingMemoryBound(to: UInt8.self)
-                pixel[0] = color.2 // B
-                pixel[1] = color.1 // G
-                pixel[2] = color.0 // R
-                pixel[3] = color.3 // A
+                pixel[0] = color.2; pixel[1] = color.1; pixel[2] = color.0; pixel[3] = color.3
             }
         }
 
-        // Add animated indicator
-        let frameNum = Int(sequenceNumber % 60)
-        let indicatorY = 50
-        let indicatorHeight = 20
-        let indicatorWidth = 100 + frameNum * 2
-
-        for y in indicatorY..<min(indicatorY + indicatorHeight, height) {
-            let rowStart = baseAddress.advanced(by: y * bytesPerRow)
-            for x in 50..<min(50 + indicatorWidth, width) {
-                let pixel = rowStart.advanced(by: x * 4).assumingMemoryBound(to: UInt8.self)
-                pixel[0] = 128 // B
-                pixel[1] = 0   // G
-                pixel[2] = 128 // R - Purple indicator
-                pixel[3] = 255 // A
-            }
-        }
+        // Draw version
+        drawText(Self.extensionVersion, baseAddress: baseAddress, bytesPerRow: bytesPerRow, width: width, height: height, startX: 50, startY: 50)
+        drawText("rcv:\(receivedBufferCount)", baseAddress: baseAddress, bytesPerRow: bytesPerRow, width: width, height: height, startX: 50, startY: 100)
 
         return buffer
+    }
+
+    private func drawText(_ text: String, baseAddress: UnsafeMutableRawPointer, bytesPerRow: Int, width: Int, height: Int, startX: Int, startY: Int) {
+        let charPatterns: [Character: [[Int]]] = [
+            "V": [[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,0,1,0],[0,1,0,1,0],[0,0,1,0,0],[0,0,1,0,0]],
+            "r": [[0,0,0,0,0],[0,0,0,0,0],[1,0,1,1,0],[1,1,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0]],
+            "c": [[0,0,0,0,0],[0,0,0,0,0],[0,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[0,1,1,1,0]],
+            "v": [[0,0,0,0,0],[0,0,0,0,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,0,1,0],[0,1,0,1,0],[0,0,1,0,0]],
+            ":": [[0,0,0,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,0,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,0,0,0]],
+            " ": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
+            "0": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+            "1": [[0,0,1,0,0],[0,1,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,1,1,1,0]],
+            "2": [[0,1,1,1,0],[1,0,0,0,1],[0,0,0,0,1],[0,0,1,1,0],[0,1,0,0,0],[1,0,0,0,0],[1,1,1,1,1]],
+            "3": [[0,1,1,1,0],[1,0,0,0,1],[0,0,0,0,1],[0,0,1,1,0],[0,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+            "4": [[0,0,0,1,0],[0,0,1,1,0],[0,1,0,1,0],[1,0,0,1,0],[1,1,1,1,1],[0,0,0,1,0],[0,0,0,1,0]],
+            "5": [[1,1,1,1,1],[1,0,0,0,0],[1,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+            "6": [[0,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+            "7": [[1,1,1,1,1],[0,0,0,0,1],[0,0,0,1,0],[0,0,1,0,0],[0,1,0,0,0],[0,1,0,0,0],[0,1,0,0,0]],
+            "8": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+            "9": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,1],[0,0,0,0,1],[0,0,0,0,1],[0,1,1,1,0]]
+        ]
+
+        let scale = 6
+        var currentX = startX
+
+        for char in text {
+            guard let pattern = charPatterns[char] else { continue }
+            for (rowIdx, row) in pattern.enumerated() {
+                for (colIdx, pixel) in row.enumerated() {
+                    if pixel == 1 {
+                        for sy in 0..<scale {
+                            for sx in 0..<scale {
+                                let x = currentX + colIdx * scale + sx
+                                let y = startY + rowIdx * scale + sy
+                                if x < width && y < height {
+                                    let pixelPtr = baseAddress.advanced(by: y * bytesPerRow + x * 4).assumingMemoryBound(to: UInt8.self)
+                                    pixelPtr[0] = 0; pixelPtr[1] = 0; pixelPtr[2] = 0; pixelPtr[3] = 255
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            currentX += 6 * scale
+        }
     }
 }
 
