@@ -201,14 +201,15 @@ class CameraManager: NSObject, ObservableObject {
             { (center, observer, name, object, userInfo) in
                 guard let observer = observer else { return }
                 let manager = Unmanaged<CameraManager>.fromOpaque(observer).takeUnretainedValue()
-                logger.info("Darwin notification: streamStarted received")
+                // Darwin notification: streamStarted received
                 // Use DispatchQueue.main for more reliable background execution
                 DispatchQueue.main.async {
                     Task { @MainActor in
-                        logger.info("Processing streamStarted - externalAppIsStreaming was: \(manager.externalAppIsStreaming), isRunning: \(manager.isRunning)")
+                        let wasStreaming = manager.externalAppIsStreaming
+                        let wasRunning = manager.isRunning
                         manager.externalAppIsStreaming = true
                         manager.updateCameraState()
-                        logger.info("After updateCameraState - isRunning: \(manager.isRunning)")
+                        logger.info("streamStarted: externalAppIsStreaming changed from \(wasStreaming) to \(manager.externalAppIsStreaming), isRunning changed from \(wasRunning) to \(manager.isRunning)")
                     }
                 }
             },
