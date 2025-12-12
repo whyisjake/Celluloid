@@ -382,10 +382,11 @@ struct CelluloidTests {
         case .success(let parseResult):
             // Verify first RGB value is preserved
             parseResult.data.withUnsafeBytes { buffer in
+                let floatStride = MemoryLayout<Float>.stride
                 let r = buffer.load(fromByteOffset: 0, as: Float.self)
-                let g = buffer.load(fromByteOffset: MemoryLayout<Float>.stride, as: Float.self)
-                let b = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 2, as: Float.self)
-                let a = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 3, as: Float.self)
+                let g = buffer.load(fromByteOffset: floatStride, as: Float.self)
+                let b = buffer.load(fromByteOffset: floatStride * 2, as: Float.self)
+                let a = buffer.load(fromByteOffset: floatStride * 3, as: Float.self)
                 #expect(abs(r - 0.1) < 0.001) // R
                 #expect(abs(g - 0.2) < 0.001) // G
                 #expect(abs(b - 0.3) < 0.001) // B
@@ -449,10 +450,11 @@ struct CelluloidTests {
         switch result {
         case .success(let parseResult):
             parseResult.data.withUnsafeBytes { buffer in
+                let floatStride = MemoryLayout<Float>.stride
                 let r = buffer.load(fromByteOffset: 0, as: Float.self)
-                let g = buffer.load(fromByteOffset: MemoryLayout<Float>.stride, as: Float.self)
-                let b = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 2, as: Float.self)
-                let a = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 3, as: Float.self)
+                let g = buffer.load(fromByteOffset: floatStride, as: Float.self)
+                let b = buffer.load(fromByteOffset: floatStride * 2, as: Float.self)
+                let a = buffer.load(fromByteOffset: floatStride * 3, as: Float.self)
                 // First cube entry (r=0, g=0, b=0) maps to pixel (0,0)
                 #expect(abs(r - 1.0) < 0.01)    // R: 255/255 = 1.0
                 #expect(abs(g - 0.502) < 0.01) // G: 128/255 ≈ 0.502
