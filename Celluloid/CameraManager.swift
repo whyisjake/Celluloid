@@ -530,9 +530,16 @@ class CameraManager: NSObject, ObservableObject {
                     let cubeIndex = (b * dimension * dimension + g * dimension + r) * 4
 
                     // Normalize to 0-1 range
-                    cubeData[cubeIndex + 0] = Float(pixelData[pixelIndex + 0]) / 255.0  // R
-                    cubeData[cubeIndex + 1] = Float(pixelData[pixelIndex + 1]) / 255.0  // G
-                    cubeData[cubeIndex + 2] = Float(pixelData[pixelIndex + 2]) / 255.0  // B
+                    if pixelIndex + 2 < pixelData.count {
+                        cubeData[cubeIndex + 0] = Float(pixelData[pixelIndex + 0]) / 255.0  // R
+                        cubeData[cubeIndex + 1] = Float(pixelData[pixelIndex + 1]) / 255.0  // G
+                        cubeData[cubeIndex + 2] = Float(pixelData[pixelIndex + 2]) / 255.0  // B
+                    } else {
+                        logger.warning("HALD LUT pixel index out of bounds at b:\(b) g:\(g) r:\(r) (pixelIndex: \(pixelIndex))")
+                        cubeData[cubeIndex + 0] = 0.0
+                        cubeData[cubeIndex + 1] = 0.0
+                        cubeData[cubeIndex + 2] = 0.0
+                    }
                     cubeData[cubeIndex + 3] = 1.0  // A
                 }
             }
