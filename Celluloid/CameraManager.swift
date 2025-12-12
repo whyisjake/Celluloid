@@ -34,8 +34,6 @@ struct LUTInfo: Hashable, Identifiable {
     let fileExtension: String  // "cube" or "png"
     
     var id: String { name }
-    
-    var displayName: String { name }
 }
 
 // MARK: - Cube LUT Parser (Testable)
@@ -521,54 +519,37 @@ class CameraManager: NSObject, ObservableObject {
 
     // MARK: - LUT Support
 
+    /// Helper to collect LUT files from a directory
+    private func collectLUTs(from subdirectory: String, extensions: [String]) -> [LUTInfo] {
+        guard let resourcePath = Bundle.main.resourcePath,
+              let files = try? FileManager.default.contentsOfDirectory(atPath: resourcePath + "/" + subdirectory) else {
+            return []
+        }
+        
+        return extensions.flatMap { ext in
+            files.filter { $0.hasSuffix("." + ext) }.map {
+                LUTInfo(name: $0.replacingOccurrences(of: "." + ext, with: ""),
+                       subdirectory: subdirectory,
+                       fileExtension: ext)
+            }
+        }
+    }
+
     @MainActor
     private func loadAvailableLUTs() {
         var luts: [LUTInfo] = []
 
         // Check root LUT_pack for .cube and .png files
-        if let rootPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: rootPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".cube") }.map { 
-                LUTInfo(name: $0.replacingOccurrences(of: ".cube", with: ""), 
-                       subdirectory: "LUT_pack", 
-                       fileExtension: "cube") 
-            })
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
-                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
-                       subdirectory: "LUT_pack", 
-                       fileExtension: "png") 
-            })
-        }
-
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack", extensions: ["cube", "png"]))
+        
         // Check Film Presets
-        if let filmPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Film Presets" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: filmPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
-                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
-                       subdirectory: "LUT_pack/Film Presets", 
-                       fileExtension: "png") 
-            })
-        }
-
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Film Presets", extensions: ["png"]))
+        
         // Check Webcam Presets
-        if let webcamPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Webcam Presets" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: webcamPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
-                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
-                       subdirectory: "LUT_pack/Webcam Presets", 
-                       fileExtension: "png") 
-            })
-        }
-
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Webcam Presets", extensions: ["png"]))
+        
         // Check Contrast Filters
-        if let contrastPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Contrast Filters" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: contrastPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
-                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
-                       subdirectory: "LUT_pack/Contrast Filters", 
-                       fileExtension: "png") 
-            })
-        }
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Contrast Filters", extensions: ["png"]))
 
         availableLUTs = luts.sorted { $0.name < $1.name }
     }
