@@ -172,4 +172,302 @@ struct CelluloidTests {
         manager.temperature = 10000
         #expect(manager.temperature == 10000)
     }
+
+    // MARK: - HALD Constants Tests
+
+    @Test func haldConstantsAreCorrect() {
+        #expect(HALDConstants.imageSize == 512)
+        #expect(HALDConstants.cubeDimension == 64)
+        #expect(HALDConstants.gridSize == 8)
+        // Verify the relationship: gridSize * cubeDimension = imageSize
+        #expect(HALDConstants.gridSize * HALDConstants.cubeDimension == HALDConstants.imageSize)
+    }
+
+    // MARK: - CubeLUTParser Tests
+
+    @Test func cubeLUTParserParsesValidFile() {
+        // Create a minimal valid 2x2x2 cube file
+        let cubeContent = """
+        # Comment line
+        TITLE "Test LUT"
+        DOMAIN_MIN 0.0 0.0 0.0
+        DOMAIN_MAX 1.0 1.0 1.0
+        LUT_3D_SIZE 2
+
+        0.0 0.0 0.0
+        1.0 0.0 0.0
+        0.0 1.0 0.0
+        1.0 1.0 0.0
+        0.0 0.0 1.0
+        1.0 0.0 1.0
+        0.0 1.0 1.0
+        1.0 1.0 1.0
+        """
+
+        let result = CubeLUTParser.parse(cubeContent)
+
+        switch result {
+        case .success(let parseResult):
+            #expect(parseResult.dimension == 2)
+            // 2x2x2 cube = 8 entries, each with 4 floats (RGBA), each float is 4 bytes
+            #expect(parseResult.data.count == 8 * 4 * MemoryLayout<Float>.size)
+        case .failure(let error):
+            Issue.record("Expected success but got error: \(error)")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesEmptyFile() {
+        let result = CubeLUTParser.parse("")
+        switch result {
+        case .failure(.emptyFile):
+            break // Expected
+        default:
+            Issue.record("Expected emptyFile error")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesOnlyComments() {
+        let cubeContent = """
+        # This is a comment
+        # Another comment
+
+        """
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .failure(.emptyFile):
+            break // Expected
+        default:
+            Issue.record("Expected emptyFile error")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesMissingLUTSize() {
+        let cubeContent = """
+        TITLE "No size"
+        0.0 0.0 0.0
+        1.0 1.0 1.0
+        """
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .failure(.missingLUTSize):
+            break // Expected
+        default:
+            Issue.record("Expected missingLUTSize error")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesInvalidLUTSize() {
+        let cubeContent = """
+        LUT_3D_SIZE invalid
+        0.0 0.0 0.0
+        """
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .failure(.invalidLUTSize):
+            break // Expected
+        default:
+            Issue.record("Expected invalidLUTSize error")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesZeroLUTSize() {
+        let cubeContent = """
+        LUT_3D_SIZE 0
+        """
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .failure(.invalidLUTSize):
+            break // Expected
+        default:
+            Issue.record("Expected invalidLUTSize error")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesNegativeLUTSize() {
+        let cubeContent = """
+        LUT_3D_SIZE -5
+        """
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .failure(.invalidLUTSize):
+            break // Expected
+        default:
+            Issue.record("Expected invalidLUTSize error")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesIncorrectValueCount() {
+        // 2x2x2 = 8 entries needed, but only providing 4
+        let cubeContent = """
+        LUT_3D_SIZE 2
+        0.0 0.0 0.0
+        1.0 0.0 0.0
+        0.0 1.0 0.0
+        1.0 1.0 0.0
+        """
+        let result = CubeLUTParser.parse(cubeContent)
+
+        switch result {
+        case .failure(.incorrectValueCount(let expected, let actual)):
+            #expect(expected == 32) // 2*2*2*4 = 32 floats (RGBA)
+            #expect(actual == 16)   // 4 entries * 4 floats = 16
+        default:
+            Issue.record("Expected incorrectValueCount error")
+        }
+    }
+
+    @Test func cubeLUTParserSkipsMetadataLines() {
+        let cubeContent = """
+        TITLE "Test with metadata"
+        DOMAIN_MIN 0.0 0.0 0.0
+        DOMAIN_MAX 1.0 1.0 1.0
+        # Comment in the middle
+        LUT_3D_SIZE 2
+        0.0 0.0 0.0
+        1.0 0.0 0.0
+        0.0 1.0 0.0
+        1.0 1.0 0.0
+        0.0 0.0 1.0
+        1.0 0.0 1.0
+        0.0 1.0 1.0
+        1.0 1.0 1.0
+        """
+
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .success(let parseResult):
+            #expect(parseResult.dimension == 2)
+        case .failure:
+            Issue.record("Expected success parsing file with metadata")
+        }
+    }
+
+    @Test func cubeLUTParserHandlesExtraWhitespace() {
+        let cubeContent = """
+        LUT_3D_SIZE 2
+          0.0   0.0   0.0
+        1.0 0.0 0.0
+        0.0 1.0 0.0
+        1.0 1.0 0.0
+        0.0 0.0 1.0
+        1.0 0.0 1.0
+        0.0 1.0 1.0
+        1.0 1.0 1.0
+        """
+
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .success(let parseResult):
+            #expect(parseResult.dimension == 2)
+        case .failure:
+            Issue.record("Expected success with extra whitespace")
+        }
+    }
+
+    @Test func cubeLUTParserPreservesRGBValues() {
+        let cubeContent = """
+        LUT_3D_SIZE 2
+        0.1 0.2 0.3
+        0.4 0.5 0.6
+        0.7 0.8 0.9
+        0.11 0.22 0.33
+        0.44 0.55 0.66
+        0.77 0.88 0.99
+        0.111 0.222 0.333
+        0.444 0.555 0.666
+        """
+
+        let result = CubeLUTParser.parse(cubeContent)
+        switch result {
+        case .success(let parseResult):
+            // Verify first RGB value is preserved
+            parseResult.data.withUnsafeBytes { buffer in
+                let floats = buffer.bindMemory(to: Float.self)
+                #expect(abs(floats[0] - 0.1) < 0.001) // R
+                #expect(abs(floats[1] - 0.2) < 0.001) // G
+                #expect(abs(floats[2] - 0.3) < 0.001) // B
+                #expect(floats[3] == 1.0) // Alpha should be 1.0
+            }
+        case .failure:
+            Issue.record("Expected success")
+        }
+    }
+
+    // MARK: - HALDCLUTParser Tests
+
+    @Test func haldCLUTParserValidatesDimensions() {
+        #expect(HALDCLUTParser.validateDimensions(width: 512, height: 512) == true)
+        #expect(HALDCLUTParser.validateDimensions(width: 256, height: 256) == false)
+        #expect(HALDCLUTParser.validateDimensions(width: 512, height: 256) == false)
+        #expect(HALDCLUTParser.validateDimensions(width: 1024, height: 1024) == false)
+        #expect(HALDCLUTParser.validateDimensions(width: 0, height: 0) == false)
+    }
+
+    @Test func haldCLUTParserRejectsInvalidSize() {
+        let pixelData = [UInt8](repeating: 0, count: 256 * 256 * 4)
+        let result = HALDCLUTParser.convertPixelData(pixelData, width: 256, height: 256)
+
+        switch result {
+        case .failure(.invalidImageSize(let width, let height)):
+            #expect(width == 256)
+            #expect(height == 256)
+        default:
+            Issue.record("Expected invalidImageSize error")
+        }
+    }
+
+    @Test func haldCLUTParserConvertsValidImage() {
+        // Create a 512x512 pixel buffer (all black)
+        let pixelData = [UInt8](repeating: 0, count: 512 * 512 * 4)
+        let result = HALDCLUTParser.convertPixelData(pixelData, width: 512, height: 512)
+
+        switch result {
+        case .success(let parseResult):
+            #expect(parseResult.dimension == HALDConstants.cubeDimension)
+            // 64x64x64 cube * 4 floats * 4 bytes = 4,194,304 bytes
+            let expectedSize = 64 * 64 * 64 * 4 * MemoryLayout<Float>.size
+            #expect(parseResult.data.count == expectedSize)
+        case .failure:
+            Issue.record("Expected success converting valid image")
+        }
+    }
+
+    @Test func haldCLUTParserNormalizesPixelValues() {
+        // Create pixel data with known values at position (0,0)
+        var pixelData = [UInt8](repeating: 0, count: 512 * 512 * 4)
+        // Set first pixel to R=255, G=128, B=64, A=255
+        pixelData[0] = 255  // R
+        pixelData[1] = 128  // G
+        pixelData[2] = 64   // B
+        pixelData[3] = 255  // A
+
+        let result = HALDCLUTParser.convertPixelData(pixelData, width: 512, height: 512)
+
+        switch result {
+        case .success(let parseResult):
+            parseResult.data.withUnsafeBytes { buffer in
+                let floats = buffer.bindMemory(to: Float.self)
+                // First cube entry (r=0, g=0, b=0) maps to pixel (0,0)
+                #expect(abs(floats[0] - 1.0) < 0.01)    // R: 255/255 = 1.0
+                #expect(abs(floats[1] - 0.502) < 0.01) // G: 128/255 ≈ 0.502
+                #expect(abs(floats[2] - 0.251) < 0.01) // B: 64/255 ≈ 0.251
+                #expect(floats[3] == 1.0)              // Alpha always 1.0
+            }
+        case .failure:
+            Issue.record("Expected success")
+        }
+    }
+
+    @Test func haldCLUTParserOutputDimensionMatchesConstant() {
+        let pixelData = [UInt8](repeating: 128, count: 512 * 512 * 4)
+        let result = HALDCLUTParser.convertPixelData(pixelData, width: 512, height: 512)
+
+        switch result {
+        case .success(let parseResult):
+            #expect(parseResult.dimension == 64)
+            #expect(parseResult.dimension == HALDConstants.cubeDimension)
+        case .failure:
+            Issue.record("Expected success")
+        }
+    }
 }

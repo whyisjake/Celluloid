@@ -20,6 +20,138 @@ struct CelluloidShared {
     static let height = 720
 }
 
+// MARK: - HALD CLUT Constants
+struct HALDConstants {
+    static let imageSize = 512       // 512x512 HALD image
+    static let cubeDimension = 64    // 64x64x64 color cube
+    static let gridSize = 8          // 8x8 grid of 64x64 blocks
+}
+
+// MARK: - Cube LUT Parser (Testable)
+struct CubeLUTParser {
+    enum ParseError: Error, Equatable {
+        case emptyFile
+        case missingLUTSize
+        case invalidLUTSize
+        case incorrectValueCount(expected: Int, actual: Int)
+        case invalidRGBValues
+    }
+
+    struct ParseResult {
+        let dimension: Int
+        let data: Data
+    }
+
+    /// Parse a .cube file content and return the LUT data
+    static func parse(_ content: String) -> Result<ParseResult, ParseError> {
+        let lines = content.components(separatedBy: .newlines)
+        var dimension = 0
+        var cubeValues: [Float] = []
+        var hasContent = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Skip empty lines and comments/metadata
+            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("TITLE") ||
+               trimmed.hasPrefix("DOMAIN_MIN") || trimmed.hasPrefix("DOMAIN_MAX") {
+                continue
+            }
+
+            hasContent = true
+
+            // Parse LUT size
+            if trimmed.hasPrefix("LUT_3D_SIZE") {
+                let parts = trimmed.split(separator: " ")
+                if parts.count >= 2, let size = Int(parts[1]), size > 0 {
+                    dimension = size
+                } else {
+                    return .failure(.invalidLUTSize)
+                }
+                continue
+            }
+
+            // Parse RGB values
+            let components = trimmed.split(separator: " ").compactMap { Float($0) }
+            if components.count >= 3 {
+                cubeValues.append(components[0])
+                cubeValues.append(components[1])
+                cubeValues.append(components[2])
+                cubeValues.append(1.0)  // Alpha
+            }
+        }
+
+        if !hasContent {
+            return .failure(.emptyFile)
+        }
+
+        guard dimension > 0 else {
+            return .failure(.missingLUTSize)
+        }
+
+        let expectedCount = dimension * dimension * dimension * 4
+        guard cubeValues.count == expectedCount else {
+            return .failure(.incorrectValueCount(expected: expectedCount, actual: cubeValues.count))
+        }
+
+        let data = Data(bytes: cubeValues, count: cubeValues.count * MemoryLayout<Float>.size)
+        return .success(ParseResult(dimension: dimension, data: data))
+    }
+}
+
+// MARK: - HALD CLUT Parser (Testable)
+struct HALDCLUTParser {
+    enum ParseError: Error, Equatable {
+        case invalidImageSize(width: Int, height: Int)
+        case failedToCreateContext
+        case failedToLoadImage
+    }
+
+    struct ParseResult {
+        let dimension: Int
+        let data: Data
+    }
+
+    /// Validate HALD image dimensions
+    static func validateDimensions(width: Int, height: Int) -> Bool {
+        return width == HALDConstants.imageSize && height == HALDConstants.imageSize
+    }
+
+    /// Convert pixel data from a 512x512 HALD image to color cube data
+    static func convertPixelData(_ pixelData: [UInt8], width: Int, height: Int) -> Result<ParseResult, ParseError> {
+        guard validateDimensions(width: width, height: height) else {
+            return .failure(.invalidImageSize(width: width, height: height))
+        }
+
+        let dimension = HALDConstants.cubeDimension
+        let gridSize = HALDConstants.gridSize
+        let bytesPerPixel = 4
+        var cubeData = [Float](repeating: 0, count: dimension * dimension * dimension * 4)
+
+        for b in 0..<dimension {
+            for g in 0..<dimension {
+                for r in 0..<dimension {
+                    // Calculate position in HALD image
+                    let blockX = (b % gridSize) * dimension + r
+                    let blockY = (b / gridSize) * dimension + g
+
+                    let pixelIndex = (blockY * width + blockX) * bytesPerPixel
+                    let cubeIndex = (b * dimension * dimension + g * dimension + r) * 4
+
+                    // Normalize to 0-1 range
+                    cubeData[cubeIndex + 0] = Float(pixelData[pixelIndex + 0]) / 255.0  // R
+                    cubeData[cubeIndex + 1] = Float(pixelData[pixelIndex + 1]) / 255.0  // G
+                    cubeData[cubeIndex + 2] = Float(pixelData[pixelIndex + 2]) / 255.0  // B
+                    cubeData[cubeIndex + 3] = 1.0  // A
+                }
+            }
+        }
+
+        let data = Data(bytes: cubeData, count: cubeData.count * MemoryLayout<Float>.size)
+        return .success(ParseResult(dimension: dimension, data: data))
+    }
+}
+
 class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var currentFrame: CGImage?
     @MainActor @Published var isRunning = false
@@ -425,54 +557,15 @@ class CameraManager: NSObject, ObservableObject {
             return
         }
 
-        let lines = content.components(separatedBy: .newlines)
-        var dimension = 0
-        var cubeValues: [Float] = []
-
-        for line in lines {
-            let trimmed = line.trimmingCharacters(in: .whitespaces)
-
-            // Skip empty lines and comments
-            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("TITLE") ||
-               trimmed.hasPrefix("DOMAIN_MIN") || trimmed.hasPrefix("DOMAIN_MAX") {
-                continue
-            }
-
-            // Parse LUT size
-            if trimmed.hasPrefix("LUT_3D_SIZE") {
-                let parts = trimmed.split(separator: " ")
-                if parts.count >= 2, let size = Int(parts[1]) {
-                    dimension = size
-                }
-                continue
-            }
-
-            // Parse RGB values
-            let components = trimmed.split(separator: " ").compactMap { Float($0) }
-            if components.count >= 3 {
-                cubeValues.append(components[0])
-                cubeValues.append(components[1])
-                cubeValues.append(components[2])
-                cubeValues.append(1.0)  // Alpha
-            }
-        }
-
-        guard dimension > 0 else {
-            logger.error("Invalid .cube file - no LUT_3D_SIZE: \(name)")
+        switch CubeLUTParser.parse(content) {
+        case .success(let result):
+            currentLUTDimension = result.dimension
+            currentLUTData = result.data
+            logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
+        case .failure(let error):
+            logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
             currentLUTData = nil
-            return
         }
-
-        let expectedCount = dimension * dimension * dimension * 4
-        guard cubeValues.count == expectedCount else {
-            logger.error("Invalid .cube file - expected \(expectedCount) values, got \(cubeValues.count): \(name)")
-            currentLUTData = nil
-            return
-        }
-
-        currentLUTDimension = dimension
-        currentLUTData = Data(bytes: cubeValues, count: cubeValues.count * MemoryLayout<Float>.size)
-        logger.info("Loaded .cube LUT: \(name) (\(dimension)x\(dimension)x\(dimension))")
     }
 
     @MainActor
@@ -484,26 +577,17 @@ class CameraManager: NSObject, ObservableObject {
             return
         }
 
-        // Convert HALD CLUT to color cube data
         let width = cgImage.width
         let height = cgImage.height
 
-        guard width == 512 && height == 512 else {
-            logger.error("LUT must be 512x512, got \(width)x\(height)")
+        guard HALDCLUTParser.validateDimensions(width: width, height: height) else {
+            logger.error("LUT must be \(HALDConstants.imageSize)x\(HALDConstants.imageSize), got \(width)x\(height)")
             currentLUTData = nil
+            return
+        }
+
         // Move the heavy conversion to a background queue
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let width = cgImage.width
-            let height = cgImage.height
-
-            guard width == 512 && height == 512 else {
-                DispatchQueue.main.async {
-                    self?.logger.error("LUT must be 512x512, got \(width)x\(height)")
-                    self?.currentLUTData = nil
-                }
-                return
-            }
-
             // Create bitmap context to extract pixel data
             let bytesPerPixel = 4
             let bytesPerRow = width * bytesPerPixel
@@ -519,7 +603,7 @@ class CameraManager: NSObject, ObservableObject {
                 bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
             ) else {
                 DispatchQueue.main.async {
-                    self?.logger.error("Failed to create context for LUT")
+                    logger.error("Failed to create context for LUT")
                     self?.currentLUTData = nil
                 }
                 return
@@ -527,36 +611,19 @@ class CameraManager: NSObject, ObservableObject {
 
             context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-            // Convert HALD CLUT to color cube format
-            // HALD level 8 = 64x64x64 cube stored in 512x512 image (8x8 blocks of 64x64)
-            let dimension = 64
-            var cubeData = [Float](repeating: 0, count: dimension * dimension * dimension * 4)
-
-            for b in 0..<dimension {
-                for g in 0..<dimension {
-                    for r in 0..<dimension {
-                        // Calculate position in HALD image
-                        let blockX = (b % 8) * 64 + r
-                        let blockY = (b / 8) * 64 + g
-
-                        let pixelIndex = (blockY * width + blockX) * bytesPerPixel
-                        let cubeIndex = (b * dimension * dimension + g * dimension + r) * 4
-
-                        // Normalize to 0-1 range
-                        cubeData[cubeIndex + 0] = Float(pixelData[pixelIndex + 0]) / 255.0  // R
-                        cubeData[cubeIndex + 1] = Float(pixelData[pixelIndex + 1]) / 255.0  // G
-                        cubeData[cubeIndex + 2] = Float(pixelData[pixelIndex + 2]) / 255.0  // B
-                        cubeData[cubeIndex + 3] = 1.0  // A
-                    }
+            // Use the testable parser for conversion
+            switch HALDCLUTParser.convertPixelData(pixelData, width: width, height: height) {
+            case .success(let result):
+                DispatchQueue.main.async {
+                    self?.currentLUTDimension = result.dimension
+                    self?.currentLUTData = result.data
+                    logger.info("Loaded HALD LUT: \(name)")
                 }
-            }
-
-            let lutData = Data(bytes: cubeData, count: cubeData.count * MemoryLayout<Float>.size)
-
-            DispatchQueue.main.async {
-                self?.currentLUTDimension = dimension
-                self?.currentLUTData = lutData
-                self?.logger.info("Loaded HALD LUT: \(name)")
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    logger.error("Failed to convert HALD LUT '\(name)': \(String(describing: error))")
+                    self?.currentLUTData = nil
+                }
             }
         }
     }
