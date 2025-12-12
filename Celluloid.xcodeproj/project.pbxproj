@@ -134,6 +134,27 @@
 		};
 /* End PBXGroup section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		F5FB21402EEB500000DC1D6E /* Install to Applications */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Install to Applications";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Install to /Applications after build\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    rm -rf /Applications/Celluloid.app\n    cp -R \"$BUILT_PRODUCTS_DIR/Celluloid.app\" /Applications/\n    echo \"Installed Celluloid.app to /Applications\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXNativeTarget section */
 		F5FB20AB2EEB46D800DC1D6E /* Celluloid */ = {
 			isa = PBXNativeTarget;
@@ -143,6 +164,7 @@
 				F5FB20A92EEB46D800DC1D6E /* Frameworks */,
 				F5FB20AA2EEB46D800DC1D6E /* Resources */,
 				F5FB21302EEB4D9000DC1D6E /* Embed Foundation Extensions */,
+				F5FB21402EEB500000DC1D6E /* Install to Applications */,
 			);
 			buildRules = (
 			);

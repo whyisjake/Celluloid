@@ -96,6 +96,9 @@ struct ContentView: View {
                     }
                 }
                 .padding()
+
+                // Credits
+                CreditsView()
             } else {
                 // Permission denied view
                 VStack(spacing: 16) {
@@ -349,6 +352,50 @@ struct FilterButton: View {
 }
 
 import AVFoundation
+
+struct CreditsView: View {
+    var body: some View {
+        VStack(spacing: 6) {
+            Divider()
+
+            HStack(spacing: 4) {
+                Text("Made with")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+                Image(systemName: "heart.fill")
+                    .font(.caption2)
+                    .foregroundColor(.red)
+                Text("in California by Jake Spurlock")
+                    .font(.caption2)
+                    .foregroundColor(.secondary)
+            }
+
+            HStack(spacing: 16) {
+                Link(destination: URL(string: "https://twitter.com/whyisjake")!) {
+                    Image(systemName: "at")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Link(destination: URL(string: "https://github.com/whyisjake")!) {
+                    Image(systemName: "chevron.left.forwardslash.chevron.right")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Link(destination: URL(string: "https://www.linkedin.com/in/jakespurlock")!) {
+                    Image(systemName: "person.crop.square")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+                Link(destination: URL(string: "https://jakespurlock.com")!) {
+                    Image(systemName: "globe")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+            }
+        }
+        .padding(.bottom, 8)
+    }
+}
 
 #Preview {
     ContentView()
