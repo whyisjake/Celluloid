@@ -490,64 +490,74 @@ class CameraManager: NSObject, ObservableObject {
         guard width == 512 && height == 512 else {
             logger.error("LUT must be 512x512, got \(width)x\(height)")
             currentLUTData = nil
-            return
-        }
+        // Move the heavy conversion to a background queue
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let width = cgImage.width
+            let height = cgImage.height
 
-        // Create bitmap context to extract pixel data
-        let bytesPerPixel = 4
-        let bytesPerRow = width * bytesPerPixel
-        var pixelData = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+            guard width == 512 && height == 512 else {
+                DispatchQueue.main.async {
+                    self?.logger.error("LUT must be 512x512, got \(width)x\(height)")
+                    self?.currentLUTData = nil
+                }
+                return
+            }
 
-        guard let context = CGContext(
-            data: &pixelData,
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: bytesPerRow,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else {
-            logger.error("Failed to create context for LUT")
-            currentLUTData = nil
-            return
-        }
+            // Create bitmap context to extract pixel data
+            let bytesPerPixel = 4
+            let bytesPerRow = width * bytesPerPixel
+            var pixelData = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
 
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            guard let context = CGContext(
+                data: &pixelData,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                DispatchQueue.main.async {
+                    self?.logger.error("Failed to create context for LUT")
+                    self?.currentLUTData = nil
+                }
+                return
+            }
 
-        // Convert HALD CLUT to color cube format
-        // HALD level 8 = 64x64x64 cube stored in 512x512 image (8x8 blocks of 64x64)
-        let dimension = 64
-        var cubeData = [Float](repeating: 0, count: dimension * dimension * dimension * 4)
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        for b in 0..<dimension {
-            for g in 0..<dimension {
-                for r in 0..<dimension {
-                    // Calculate position in HALD image
-                    let blockX = (b % 8) * 64 + r
-                    let blockY = (b / 8) * 64 + g
+            // Convert HALD CLUT to color cube format
+            // HALD level 8 = 64x64x64 cube stored in 512x512 image (8x8 blocks of 64x64)
+            let dimension = 64
+            var cubeData = [Float](repeating: 0, count: dimension * dimension * dimension * 4)
 
-                    let pixelIndex = (blockY * width + blockX) * bytesPerPixel
-                    let cubeIndex = (b * dimension * dimension + g * dimension + r) * 4
+            for b in 0..<dimension {
+                for g in 0..<dimension {
+                    for r in 0..<dimension {
+                        // Calculate position in HALD image
+                        let blockX = (b % 8) * 64 + r
+                        let blockY = (b / 8) * 64 + g
 
-                    // Normalize to 0-1 range
-                    if pixelIndex + 2 < pixelData.count {
+                        let pixelIndex = (blockY * width + blockX) * bytesPerPixel
+                        let cubeIndex = (b * dimension * dimension + g * dimension + r) * 4
+
+                        // Normalize to 0-1 range
                         cubeData[cubeIndex + 0] = Float(pixelData[pixelIndex + 0]) / 255.0  // R
                         cubeData[cubeIndex + 1] = Float(pixelData[pixelIndex + 1]) / 255.0  // G
                         cubeData[cubeIndex + 2] = Float(pixelData[pixelIndex + 2]) / 255.0  // B
-                    } else {
-                        logger.warning("HALD LUT pixel index out of bounds at b:\(b) g:\(g) r:\(r) (pixelIndex: \(pixelIndex))")
-                        cubeData[cubeIndex + 0] = 0.0
-                        cubeData[cubeIndex + 1] = 0.0
-                        cubeData[cubeIndex + 2] = 0.0
+                        cubeData[cubeIndex + 3] = 1.0  // A
                     }
-                    cubeData[cubeIndex + 3] = 1.0  // A
                 }
             }
-        }
 
-        currentLUTDimension = dimension
-        currentLUTData = Data(bytes: cubeData, count: cubeData.count * MemoryLayout<Float>.size)
-        logger.info("Loaded HALD LUT: \(name)")
+            let lutData = Data(bytes: cubeData, count: cubeData.count * MemoryLayout<Float>.size)
+
+            DispatchQueue.main.async {
+                self?.currentLUTDimension = dimension
+                self?.currentLUTData = lutData
+                self?.logger.info("Loaded HALD LUT: \(name)")
+            }
+        }
     }
 
     // MARK: - Preview Window Control
