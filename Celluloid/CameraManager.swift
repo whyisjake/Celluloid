@@ -33,7 +33,8 @@ struct LUTInfo: Hashable, Identifiable {
     let subdirectory: String?  // Subdirectory path relative to bundle resources (e.g., "LUT_pack" or "LUT_pack/Film Presets")
     let fileExtension: String  // "cube" or "png"
     
-    var id: String { name }
+    // Use composite ID to ensure uniqueness across subdirectories
+    var id: String { "\(subdirectory ?? "root")/\(name).\(fileExtension)" }
 }
 
 // MARK: - Cube LUT Parser (Testable)
@@ -521,8 +522,12 @@ class CameraManager: NSObject, ObservableObject {
 
     /// Helper to collect LUT files from a directory
     private func collectLUTs(from subdirectory: String, extensions: [String]) -> [LUTInfo] {
-        guard let resourcePath = Bundle.main.resourcePath,
-              let files = try? FileManager.default.contentsOfDirectory(atPath: resourcePath + "/" + subdirectory) else {
+        guard let resourcePath = Bundle.main.resourcePath else {
+            return []
+        }
+        
+        let directoryURL = URL(fileURLWithPath: resourcePath).appendingPathComponent(subdirectory)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: directoryURL.path) else {
             return []
         }
         
