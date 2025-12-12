@@ -27,6 +27,16 @@ struct HALDConstants {
     static let gridSize = 8          // 8x8 grid of 64x64 blocks
 }
 
+// MARK: - LUT Info
+struct LUTInfo: Hashable, Identifiable {
+    let name: String
+    let subdirectory: String?  // Subdirectory path relative to bundle resources (e.g., "LUT_pack" or "LUT_pack/Film Presets")
+    let fileExtension: String  // "cube" or "png"
+    
+    // Use composite ID to ensure uniqueness (subdirectory is always set in our usage)
+    var id: String { "\(subdirectory ?? "")/\(name).\(fileExtension)" }
+}
+
 // MARK: - Cube LUT Parser (Testable)
 struct CubeLUTParser {
     enum ParseError: Error, Equatable {
@@ -189,7 +199,7 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     // LUT support
-    @MainActor @Published var availableLUTs: [String] = []
+    @MainActor @Published var availableLUTs: [LUTInfo] = []
     @MainActor @Published var selectedLUT: String? = nil {
         didSet {
             if let lutName = selectedLUT {
@@ -202,6 +212,12 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
     @MainActor private var currentLUTData: Data?
+    
+    // Helper to find LUT info by name
+    @MainActor
+    private func lutInfo(for name: String) -> LUTInfo? {
+        availableLUTs.first { $0.name == name }
+    }
     @MainActor private var currentLUTDimension: Int = 64
 
     // UserDefaults keys
@@ -504,75 +520,96 @@ class CameraManager: NSObject, ObservableObject {
 
     // MARK: - LUT Support
 
+    /// Helper to collect LUT files from a directory
+    private func collectLUTs(from subdirectory: String, extensions: [String]) -> [LUTInfo] {
+        guard let resourcePath = Bundle.main.resourcePath else {
+            return []
+        }
+        
+        let directoryURL = URL(fileURLWithPath: resourcePath).appendingPathComponent(subdirectory)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: directoryURL.path) else {
+            return []
+        }
+        
+        return extensions.flatMap { ext in
+            files.filter { $0.hasSuffix("." + ext) }.map { filename in
+                let name = String(filename.dropLast(ext.count + 1))  // Remove .ext safely
+                return LUTInfo(name: name,
+                              subdirectory: subdirectory,
+                              fileExtension: ext)
+            }
+        }
+    }
+
     @MainActor
     private func loadAvailableLUTs() {
-        var luts: [String] = []
+        var luts: [LUTInfo] = []
 
         // Check root LUT_pack for .cube and .png files
-        if let rootPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: rootPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".cube") }.map { $0.replacingOccurrences(of: ".cube", with: "") })
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
-        }
-
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack", extensions: ["cube", "png"]))
+        
         // Check Film Presets
-        if let filmPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Film Presets" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: filmPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
-        }
-
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Film Presets", extensions: ["png"]))
+        
         // Check Webcam Presets
-        if let webcamPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Webcam Presets" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: webcamPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
-        }
-
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Webcam Presets", extensions: ["png"]))
+        
         // Check Contrast Filters
-        if let contrastPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Contrast Filters" }),
-           let files = try? FileManager.default.contentsOfDirectory(atPath: contrastPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
-        }
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Contrast Filters", extensions: ["png"]))
 
-        availableLUTs = luts.sorted()
+        availableLUTs = luts.sorted { $0.name < $1.name }
     }
 
     @MainActor
     private func loadLUT(named name: String) {
-        // Try .cube file first (in root LUT_pack folder)
-        if let cubeURL = Bundle.main.url(forResource: name, withExtension: "cube", subdirectory: "LUT_pack") {
-            loadCubeLUT(from: cubeURL, name: name)
-            return
-        }
-
-        // Try PNG HALD CLUT in various subfolders
-        guard let lutURL = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack/Film Presets")
-                ?? Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack/Webcam Presets")
-                ?? Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack/Contrast Filters")
-                ?? Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack") else {
-            logger.error("LUT not found: \(name)")
+        // Find the LUT info with stored path
+        guard let info = lutInfo(for: name) else {
+            logger.error("LUT not found in availableLUTs: \(name)")
             currentLUTData = nil
             return
         }
-
-        loadPNGHaldLUT(from: lutURL, name: name)
+        
+        // Use stored subdirectory to avoid redundant lookups
+        guard let lutURL = Bundle.main.url(forResource: info.name, 
+                                           withExtension: info.fileExtension, 
+                                           subdirectory: info.subdirectory) else {
+            logger.error("LUT file not found: \(name) in \(info.subdirectory ?? "root")")
+            currentLUTData = nil
+            return
+        }
+        
+        if info.fileExtension == "cube" {
+            loadCubeLUT(from: lutURL, name: name)
+        } else {
+            loadPNGHaldLUT(from: lutURL, name: name)
+        }
     }
 
     @MainActor
     private func loadCubeLUT(from url: URL, name: String) {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
-            logger.error("Failed to read .cube file: \(name)")
-            currentLUTData = nil
-            return
-        }
+        // Move file reading and parsing to a background queue to avoid UI freezes
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+                logger.error("Failed to read .cube file: \(name)")
+                DispatchQueue.main.async {
+                    self?.currentLUTData = nil
+                }
+                return
+            }
 
-        switch CubeLUTParser.parse(content) {
-        case .success(let result):
-            currentLUTDimension = result.dimension
-            currentLUTData = result.data
-            logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
-        case .failure(let error):
-            logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
-            currentLUTData = nil
+            switch CubeLUTParser.parse(content) {
+            case .success(let result):
+                logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
+                DispatchQueue.main.async {
+                    self?.currentLUTDimension = result.dimension
+                    self?.currentLUTData = result.data
+                }
+            case .failure(let error):
+                logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
+                DispatchQueue.main.async {
+                    self?.currentLUTData = nil
+                }
+            }
         }
     }
 
@@ -1025,6 +1062,10 @@ class CameraManager: NSObject, ObservableObject {
     private var framesSentCount = 0
     private var lastLoggedFrameCount = 0
     private var framesDroppedSinceLastSend = 0
+    
+    /// Maximum number of consecutive dropped frames before forcing a reconnection.
+    /// Set to 60 frames, which represents approximately 2 seconds at 30fps.
+    private let maxDroppedFramesBeforeReconnect = 60
 
     private func sendFrameToSinkStream(_ sampleBuffer: CMSampleBuffer) {
         guard isConnectedToSinkStream, let queue = sinkQueue else {
@@ -1038,7 +1079,7 @@ class CameraManager: NSObject, ObservableObject {
         guard readyToEnqueue else {
             framesDroppedSinceLastSend += 1
             // If we've dropped too many frames, force reconnection
-            if framesDroppedSinceLastSend > 60 {  // 2 seconds at 30fps
+            if framesDroppedSinceLastSend > maxDroppedFramesBeforeReconnect {
                 logger.warning("Dropped \(self.framesDroppedSinceLastSend) frames, forcing reconnection")
                 isConnectedToSinkStream = false
                 sinkQueue = nil

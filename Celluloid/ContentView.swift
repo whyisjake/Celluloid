@@ -342,7 +342,8 @@ struct VirtualCameraSection: View {
 struct LUTSection: View {
     @ObservedObject var cameraManager: CameraManager
 
-    // Acronyms that should stay uppercase
+    // List of common photography/film acronyms that should remain uppercase in LUT preset names.
+    // Add to this list any acronyms that are expected to appear in LUT file names and should not be capitalized as regular words.
     private let acronyms = ["CCD", "HD", "II", "BW"]
 
     private func formatLUTName(_ name: String) -> String {
@@ -367,9 +368,9 @@ struct LUTSection: View {
                 set: { cameraManager.selectedLUT = $0 == "None" ? nil : $0 }
             )) {
                 Text("None").tag("None")
-                ForEach(cameraManager.availableLUTs, id: \.self) { lut in
-                    Text(formatLUTName(lut))
-                        .tag(lut)
+                ForEach(cameraManager.availableLUTs) { lut in
+                    Text(formatLUTName(lut.name))
+                        .tag(lut.name)
                 }
             }
             .pickerStyle(.menu)
