@@ -1053,6 +1053,10 @@ class CameraManager: NSObject, ObservableObject {
     private var framesSentCount = 0
     private var lastLoggedFrameCount = 0
     private var framesDroppedSinceLastSend = 0
+    
+    /// Maximum number of consecutive dropped frames before forcing a reconnection.
+    /// Set to 60 frames, which represents approximately 2 seconds at 30fps.
+    private let maxDroppedFramesBeforeReconnect = 60
 
     private func sendFrameToSinkStream(_ sampleBuffer: CMSampleBuffer) {
         guard isConnectedToSinkStream, let queue = sinkQueue else {
@@ -1066,7 +1070,7 @@ class CameraManager: NSObject, ObservableObject {
         guard readyToEnqueue else {
             framesDroppedSinceLastSend += 1
             // If we've dropped too many frames, force reconnection
-            if framesDroppedSinceLastSend > 60 {  // 2 seconds at 30fps
+            if framesDroppedSinceLastSend > maxDroppedFramesBeforeReconnect {
                 logger.warning("Dropped \(self.framesDroppedSinceLastSend) frames, forcing reconnection")
                 isConnectedToSinkStream = false
                 sinkQueue = nil
