@@ -68,6 +68,13 @@ struct ContentView: View {
                         // Filters Section
                         FiltersSection(cameraManager: cameraManager)
                             .padding(.horizontal)
+
+                        Divider()
+                            .padding(.vertical, 8)
+
+                        // LUT Section
+                        LUTSection(cameraManager: cameraManager)
+                            .padding(.horizontal)
                             .padding(.bottom)
                     }
                 }
@@ -328,6 +335,34 @@ struct VirtualCameraSection: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
+        }
+    }
+}
+
+struct LUTSection: View {
+    @ObservedObject var cameraManager: CameraManager
+    @State private var availableLUTs: [String] = []
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Film LUTs")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            Picker("LUT", selection: Binding(
+                get: { cameraManager.selectedLUT ?? "None" },
+                set: { cameraManager.selectedLUT = $0 == "None" ? nil : $0 }
+            )) {
+                Text("None").tag("None")
+                ForEach(availableLUTs, id: \.self) { lut in
+                    Text(lut.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .tag(lut)
+                }
+            }
+            .pickerStyle(.menu)
+        }
+        .onAppear {
+            availableLUTs = cameraManager.getAvailableLUTs()
         }
     }
 }

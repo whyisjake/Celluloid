@@ -55,6 +55,16 @@
 		F5FB21252EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = jakespurlock.Celluloid.CelluloidCameraExtension.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		F5FB21502EEB600000DC1D6E /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = F5FB21242EEB4D9000DC1D6E /* CelluloidCameraExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
+
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		F5FB20AE2EEB46D800DC1D6E /* Celluloid */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
@@ -73,6 +83,9 @@
 		};
 		F5FB21262EEB4D9000DC1D6E /* CelluloidCameraExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				F5FB21502EEB600000DC1D6E /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
 			path = CelluloidCameraExtension;
 			sourceTree = "<group>";
 		};
@@ -135,6 +148,26 @@
 /* End PBXGroup section */
 
 /* Begin PBXShellScriptBuildPhase section */
+		F5FB21412EEB500100DC1D6E /* Copy LUT Pack */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/LUT_pack",
+			);
+			name = "Copy LUT Pack";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app/Contents/Resources/LUT_pack",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Copy LUT_pack to app bundle Resources\nif [ -d \"$SRCROOT/LUT_pack\" ]; then\n    cp -R \"$SRCROOT/LUT_pack\" \"$BUILT_PRODUCTS_DIR/$PRODUCT_NAME.app/Contents/Resources/\"\n    echo \"Copied LUT_pack to app bundle\"\nfi\n";
+		};
 		F5FB21402EEB500000DC1D6E /* Install to Applications */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
@@ -143,15 +176,18 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app",
+				"$(SRCROOT)/LUT_pack",
 			);
 			name = "Install to Applications";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"/Applications/$(PRODUCT_NAME).app",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Install to /Applications after build\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    rm -rf /Applications/Celluloid.app\n    cp -R \"$BUILT_PRODUCTS_DIR/Celluloid.app\" /Applications/\n    echo \"Installed Celluloid.app to /Applications\"\nfi\n";
+			shellScript = "# Install to /Applications after build\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    rm -rf /Applications/Celluloid.app\n    cp -R \"$BUILT_PRODUCTS_DIR/Celluloid.app\" /Applications/\n    # Copy LUT_pack to installed app\n    if [ -d \"$SRCROOT/LUT_pack\" ]; then\n        cp -R \"$SRCROOT/LUT_pack\" /Applications/Celluloid.app/Contents/Resources/\n        echo \"Copied LUT_pack to /Applications/Celluloid.app\"\n    fi\n    echo \"Installed Celluloid.app to /Applications\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -164,6 +200,7 @@
 				F5FB20A92EEB46D800DC1D6E /* Frameworks */,
 				F5FB20AA2EEB46D800DC1D6E /* Resources */,
 				F5FB21302EEB4D9000DC1D6E /* Embed Foundation Extensions */,
+				F5FB21412EEB500100DC1D6E /* Copy LUT Pack */,
 				F5FB21402EEB500000DC1D6E /* Install to Applications */,
 			);
 			buildRules = (
@@ -512,6 +549,7 @@
 				ENABLE_CAMERA = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
@@ -548,6 +586,7 @@
 				ENABLE_CAMERA = YES;
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_PREVIEWS = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				ENABLE_USER_SELECTED_FILES = readonly;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSUIElement = YES;
