@@ -365,6 +365,7 @@ struct CelluloidTests {
     }
 
     @Test func cubeLUTParserPreservesRGBValues() {
+        let tolerance: Float = 0.001
         let cubeContent = """
         LUT_3D_SIZE 2
         0.1 0.2 0.3
@@ -387,9 +388,9 @@ struct CelluloidTests {
                 let g = buffer.load(fromByteOffset: floatStride, as: Float.self)
                 let b = buffer.load(fromByteOffset: floatStride * 2, as: Float.self)
                 let a = buffer.load(fromByteOffset: floatStride * 3, as: Float.self)
-                #expect(abs(r - 0.1) < 0.001) // R
-                #expect(abs(g - 0.2) < 0.001) // G
-                #expect(abs(b - 0.3) < 0.001) // B
+                #expect(abs(r - 0.1) < tolerance) // R
+                #expect(abs(g - 0.2) < tolerance) // G
+                #expect(abs(b - 0.3) < tolerance) // B
                 #expect(a == 1.0) // Alpha should be 1.0
             }
         case .failure:
