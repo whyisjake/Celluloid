@@ -11,6 +11,7 @@ import SwiftUI
 import Combine
 import os.log
 import CoreMediaIO
+import Metal
 
 private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "CameraManager")
 
@@ -239,7 +240,13 @@ class CameraManager: NSObject, ObservableObject {
     private let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "com.celluloid.sessionQueue")
-    private let context = CIContext()
+
+    // Metal-backed CIContext for GPU-accelerated rendering
+    private let metalDevice: MTLDevice?
+    private let context: CIContext
+
+    // CVPixelBufferPool for efficient buffer reuse
+    private var pixelBufferPool: CVPixelBufferPool?
 
     // CoreMediaIO sink stream for sending frames to the camera extension
     private var sinkStreamID: CMIOStreamID = 0
@@ -284,7 +291,25 @@ class CameraManager: NSObject, ObservableObject {
     private static let streamStoppedNotification = "com.celluloid.streamStopped" as CFString
 
     override init() {
+        // Initialize Metal device and CIContext before super.init()
+        if let device = MTLCreateSystemDefaultDevice() {
+            self.metalDevice = device
+            self.context = CIContext(mtlDevice: device, options: [
+                .cacheIntermediates: false,  // Reduce memory usage
+                .priorityRequestLow: false   // Use high priority for real-time
+            ])
+            logger.info("Initialized Metal-backed CIContext with device: \(device.name)")
+        } else {
+            self.metalDevice = nil
+            self.context = CIContext()
+            logger.warning("Metal not available, falling back to CPU-based CIContext")
+        }
+
         super.init()
+
+        // Create pixel buffer pool for efficient buffer reuse
+        createPixelBufferPool()
+
         Task { @MainActor in
             loadAvailableLUTs()
             loadSettings()
@@ -292,6 +317,33 @@ class CameraManager: NSObject, ObservableObject {
             loadAvailableCameras()
             setupDarwinNotifications()
             // Camera starts OFF - will turn on when external app starts streaming
+        }
+    }
+
+    private func createPixelBufferPool() {
+        let poolAttributes: [CFString: Any] = [
+            kCVPixelBufferPoolMinimumBufferCountKey: 3  // Keep 3 buffers in pool
+        ]
+
+        let pixelBufferAttributes: [CFString: Any] = [
+            kCVPixelBufferWidthKey: CelluloidShared.width,
+            kCVPixelBufferHeightKey: CelluloidShared.height,
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,  // IOSurface-backed for zero-copy
+            kCVPixelBufferMetalCompatibilityKey: true  // Metal compatible
+        ]
+
+        let status = CVPixelBufferPoolCreate(
+            kCFAllocatorDefault,
+            poolAttributes as CFDictionary,
+            pixelBufferAttributes as CFDictionary,
+            &pixelBufferPool
+        )
+
+        if status == kCVReturnSuccess {
+            logger.info("Created CVPixelBufferPool with IOSurface-backed, Metal-compatible buffers")
+        } else {
+            logger.error("Failed to create CVPixelBufferPool: \(status)")
         }
     }
 
@@ -1106,52 +1158,81 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    private func createSampleBuffer(from cgImage: CGImage) -> CMSampleBuffer? {
-        let width = CelluloidShared.width
-        let height = CelluloidShared.height
+}
+
+extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
+    nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard let inputPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        let ciImage = CIImage(cvPixelBuffer: inputPixelBuffer)
+
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            let processedImage = self.applyFilters(to: ciImage)
+
+            // Get a pixel buffer from the pool and render directly to it (GPU → GPU, no CPU roundtrip)
+            if let outputBuffer = self.getPooledPixelBuffer() {
+                // Scale the processed image to fit our output buffer size
+                let outputWidth = CGFloat(CelluloidShared.width)
+                let outputHeight = CGFloat(CelluloidShared.height)
+                let scaleX = outputWidth / processedImage.extent.width
+                let scaleY = outputHeight / processedImage.extent.height
+                let scaledImage = processedImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+
+                // Render CIImage directly to CVPixelBuffer using Metal
+                self.context.render(
+                    scaledImage,
+                    to: outputBuffer,
+                    bounds: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight),
+                    colorSpace: CGColorSpaceCreateDeviceRGB()
+                )
+
+                // Create CGImage from pixel buffer for preview (still needed for SwiftUI Image)
+                if let cgImage = self.createCGImage(from: outputBuffer) {
+                    self.currentFrame = cgImage
+                }
+
+                // Send to sink stream using the same buffer (zero-copy)
+                self.sinkConnectionQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    if let sampleBuffer = self.createSampleBuffer(from: outputBuffer) {
+                        self.sendFrameToSinkStream(sampleBuffer)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get a pixel buffer from the pool for rendering
+    private func getPooledPixelBuffer() -> CVPixelBuffer? {
+        guard let pool = pixelBufferPool else {
+            logger.warning("Pixel buffer pool not available")
+            return nil
+        }
 
         var pixelBuffer: CVPixelBuffer?
-        let attrs: [CFString: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
-        ]
+        let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
 
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            attrs as CFDictionary,
-            &pixelBuffer
-        )
-
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+        if status != kCVReturnSuccess {
+            logger.warning("Failed to get pixel buffer from pool: \(status)")
             return nil
         }
 
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        return pixelBuffer
+    }
 
-        guard let context = CGContext(
-            data: CVPixelBufferGetBaseAddress(buffer),
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        ) else {
-            return nil
-        }
+    /// Create CGImage from CVPixelBuffer efficiently
+    private func createCGImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        return context.createCGImage(ciImage, from: ciImage.extent)
+    }
 
-        context.interpolationQuality = .high
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-
+    /// Create sample buffer from CVPixelBuffer directly (no CGImage intermediate)
+    private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
         var formatDescription: CMFormatDescription?
         CMVideoFormatDescriptionCreateForImageBuffer(
             allocator: kCFAllocatorDefault,
-            imageBuffer: buffer,
+            imageBuffer: pixelBuffer,
             formatDescriptionOut: &formatDescription
         )
 
@@ -1167,36 +1248,12 @@ class CameraManager: NSObject, ObservableObject {
         var sampleBuffer: CMSampleBuffer?
         CMSampleBufferCreateReadyWithImageBuffer(
             allocator: kCFAllocatorDefault,
-            imageBuffer: buffer,
+            imageBuffer: pixelBuffer,
             formatDescription: format,
             sampleTiming: &timingInfo,
             sampleBufferOut: &sampleBuffer
         )
 
         return sampleBuffer
-    }
-}
-
-extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
-    nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            let processedImage = self.applyFilters(to: ciImage)
-
-            if let cgImage = self.context.createCGImage(processedImage, from: processedImage.extent) {
-                self.currentFrame = cgImage
-
-                self.sinkConnectionQueue.async { [weak self] in
-                    guard let self = self else { return }
-                    if let sampleBuffer = self.createSampleBuffer(from: cgImage) {
-                        self.sendFrameToSinkStream(sampleBuffer)
-                    }
-                }
-            }
-        }
     }
 }
