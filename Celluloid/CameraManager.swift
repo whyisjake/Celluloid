@@ -562,8 +562,8 @@ class CameraManager: NSObject, ObservableObject {
         // Move file reading and parsing to a background queue to avoid UI freezes
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+                logger.error("Failed to read .cube file: \(name)")
                 DispatchQueue.main.async {
-                    logger.error("Failed to read .cube file: \(name)")
                     self?.currentLUTData = nil
                 }
                 return
@@ -571,14 +571,14 @@ class CameraManager: NSObject, ObservableObject {
 
             switch CubeLUTParser.parse(content) {
             case .success(let result):
+                logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
                 DispatchQueue.main.async {
                     self?.currentLUTDimension = result.dimension
                     self?.currentLUTData = result.data
-                    logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
                 }
             case .failure(let error):
+                logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
                 DispatchQueue.main.async {
-                    logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
                     self?.currentLUTData = nil
                 }
             }
