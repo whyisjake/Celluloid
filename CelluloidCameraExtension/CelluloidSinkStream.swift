@@ -25,6 +25,7 @@ class CelluloidSinkStreamSource: NSObject, CMIOExtensionStreamSource {
     // Store the client for consuming buffers
     private var sinkClient: CMIOExtensionClient?
     private var isConsuming = false
+    private var isStreamingStarted = false  // Track if startStream() was called
 
     // Debug counters - shared with source stream
     static var authCount = 0
@@ -101,21 +102,24 @@ class CelluloidSinkStreamSource: NSObject, CMIOExtensionStreamSource {
 
     func authorizedToStartStream(for client: CMIOExtensionClient) -> Bool {
         // Store the client for later use in consuming buffers
+        // This should be the container app (Celluloid) connecting to send us frames
         sinkClient = client
         Self.authCount += 1
-        logger.info("Sink stream authorized for client (auth #\(Self.authCount))")
+        logger.info("Sink stream authorized for CONTAINER APP client (auth #\(Self.authCount)) - ready to receive frames")
         return true
     }
 
     func startStream() throws {
         Self.startCount += 1
-        logger.info("Sink stream started #\(Self.startCount) - beginning to consume frames")
+        isStreamingStarted = true
+        logger.info("Sink stream started #\(Self.startCount) - stream is now in streaming state")
         // Start consuming buffers from the container app
         startConsuming()
     }
 
     func stopStream() throws {
         logger.info("Sink stream stopped")
+        isStreamingStarted = false
         isConsuming = false
         sinkClient = nil
     }
@@ -136,17 +140,30 @@ class CelluloidSinkStreamSource: NSObject, CMIOExtensionStreamSource {
     }
 
     /// Triggered by source stream when a client (like Photo Booth) connects
+    /// This does NOT override the sink client - we only consume from the container app
     func triggerConsumption(for client: CMIOExtensionClient) {
-        logger.info("Consumption triggered by source stream client")
-        Self.authCount += 1  // Count this as an "auth" for debugging
-        sinkClient = client
-        isConsuming = true
-        consumeNextBuffer(from: client)
+        logger.info("Source stream client connected - checking if sink stream is ready")
+
+        // Only consume if the sink stream is in a streaming state AND we have a client
+        guard isStreamingStarted else {
+            logger.info("Sink stream not yet started - container app needs to call CMIODeviceStartStream first")
+            return
+        }
+
+        if let existingClient = sinkClient {
+            logger.info("Using existing sink client (container app) for consumption")
+            if !isConsuming {
+                isConsuming = true
+                consumeNextBuffer(from: existingClient)
+            }
+        } else {
+            logger.warning("No sink client yet - container app hasn't connected to sink stream")
+        }
     }
 
     /// Recursively consume buffers from the container app
     private func consumeNextBuffer(from client: CMIOExtensionClient) {
-        guard isConsuming else { return }
+        guard isConsuming, isStreamingStarted else { return }
 
         // This call pulls a frame from the container app's queue
         stream.consumeSampleBuffer(from: client) { [weak self] sampleBuffer, sequenceNumber, discontinuity, hasMoreSampleBuffers, error in

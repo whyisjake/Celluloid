@@ -102,12 +102,20 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         return true
     }
 
+    private static let streamStartedNotification = "com.celluloid.streamStarted" as CFString
+    private static let streamStoppedNotification = "com.celluloid.streamStopped" as CFString
+
     func startStream() throws {
         guard !_isStreaming else { return }
         _isStreaming = true
         sequenceNumber = 0
 
-        logger.info("Starting stream")
+        logger.info("Starting stream - external app is using the camera")
+
+        // Notify main app via Darwin notification (works across sandbox)
+        let notifyCenter = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterPostNotification(notifyCenter, CFNotificationName(Self.streamStartedNotification), nil, nil, true)
+        logger.info("Posted Darwin notification: streamStarted")
 
         frameTimer = DispatchSource.makeTimerSource(queue: timerQueue)
         frameTimer?.schedule(deadline: .now(), repeating: 1.0 / Self.frameRate)
@@ -120,7 +128,13 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
     func stopStream() throws {
         guard _isStreaming else { return }
         _isStreaming = false
-        logger.info("Stopping stream")
+        logger.info("Stopping stream - external app stopped using the camera")
+
+        // Notify main app via Darwin notification (works across sandbox)
+        let notifyCenter = CFNotificationCenterGetDarwinNotifyCenter()
+        CFNotificationCenterPostNotification(notifyCenter, CFNotificationName(Self.streamStoppedNotification), nil, nil, true)
+        logger.info("Posted Darwin notification: streamStopped")
+
         frameTimer?.cancel()
         frameTimer = nil
     }
@@ -203,9 +217,7 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         sequenceNumber += 1
     }
 
-    // MARK: - Test Pattern
-
-    private static let extensionVersion = "V45"
+    // MARK: - Placeholder Image
 
     private func createTestPatternBuffer() -> CVPixelBuffer {
         var pixelBuffer: CVPixelBuffer?
@@ -236,52 +248,34 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
         let height = CVPixelBufferGetHeight(buffer)
         let width = CVPixelBufferGetWidth(buffer)
 
-        // Color bars
-        let colors: [(UInt8, UInt8, UInt8, UInt8)] = [
-            (255, 255, 255, 255), (255, 255, 0, 255), (0, 255, 255, 255), (0, 255, 0, 255),
-            (255, 0, 255, 255), (255, 0, 0, 255), (0, 0, 255, 255), (0, 0, 0, 255)
-        ]
-
-        let barWidth = width / colors.count
-
+        // Dark gray background
         for y in 0..<height {
             let rowStart = baseAddress.advanced(by: y * bytesPerRow)
             for x in 0..<width {
-                let colorIndex = min(x / barWidth, colors.count - 1)
-                let color = colors[colorIndex]
                 let pixel = rowStart.advanced(by: x * 4).assumingMemoryBound(to: UInt8.self)
-                pixel[0] = color.2; pixel[1] = color.1; pixel[2] = color.0; pixel[3] = color.3
+                pixel[0] = 40; pixel[1] = 40; pixel[2] = 40; pixel[3] = 255  // Dark gray BGRA
             }
         }
 
-        // Draw version
-        drawText(Self.extensionVersion, baseAddress: baseAddress, bytesPerRow: bytesPerRow, width: width, height: height, startX: 50, startY: 50)
-        drawText("rcv:\(receivedBufferCount)", baseAddress: baseAddress, bytesPerRow: bytesPerRow, width: width, height: height, startX: 50, startY: 100)
+        // Draw "CELLULOID" centered
+        drawTextWhite("CELLULOID", baseAddress: baseAddress, bytesPerRow: bytesPerRow, width: width, height: height, startX: width/2 - 180, startY: height/2 - 40)
 
         return buffer
     }
 
-    private func drawText(_ text: String, baseAddress: UnsafeMutableRawPointer, bytesPerRow: Int, width: Int, height: Int, startX: Int, startY: Int) {
+    private func drawTextWhite(_ text: String, baseAddress: UnsafeMutableRawPointer, bytesPerRow: Int, width: Int, height: Int, startX: Int, startY: Int) {
         let charPatterns: [Character: [[Int]]] = [
-            "V": [[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,0,1,0],[0,1,0,1,0],[0,0,1,0,0],[0,0,1,0,0]],
-            "r": [[0,0,0,0,0],[0,0,0,0,0],[1,0,1,1,0],[1,1,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0]],
-            "c": [[0,0,0,0,0],[0,0,0,0,0],[0,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[0,1,1,1,0]],
-            "v": [[0,0,0,0,0],[0,0,0,0,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,0,1,0],[0,1,0,1,0],[0,0,1,0,0]],
-            ":": [[0,0,0,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,0,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,0,0,0]],
-            " ": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]],
-            "0": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
-            "1": [[0,0,1,0,0],[0,1,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,1,1,1,0]],
-            "2": [[0,1,1,1,0],[1,0,0,0,1],[0,0,0,0,1],[0,0,1,1,0],[0,1,0,0,0],[1,0,0,0,0],[1,1,1,1,1]],
-            "3": [[0,1,1,1,0],[1,0,0,0,1],[0,0,0,0,1],[0,0,1,1,0],[0,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
-            "4": [[0,0,0,1,0],[0,0,1,1,0],[0,1,0,1,0],[1,0,0,1,0],[1,1,1,1,1],[0,0,0,1,0],[0,0,0,1,0]],
-            "5": [[1,1,1,1,1],[1,0,0,0,0],[1,1,1,1,0],[0,0,0,0,1],[0,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
-            "6": [[0,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
-            "7": [[1,1,1,1,1],[0,0,0,0,1],[0,0,0,1,0],[0,0,1,0,0],[0,1,0,0,0],[0,1,0,0,0],[0,1,0,0,0]],
-            "8": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
-            "9": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,1],[0,0,0,0,1],[0,0,0,0,1],[0,1,1,1,0]]
+            "C": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,1],[0,1,1,1,0]],
+            "E": [[1,1,1,1,1],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,0],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,1]],
+            "L": [[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,0,0,0,0],[1,1,1,1,1]],
+            "U": [[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+            "O": [[0,1,1,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[0,1,1,1,0]],
+            "I": [[0,1,1,1,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,0,1,0,0],[0,1,1,1,0]],
+            "D": [[1,1,1,0,0],[1,0,0,1,0],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,0,1],[1,0,0,1,0],[1,1,1,0,0]],
+            " ": [[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]]
         ]
 
-        let scale = 6
+        let scale = 8
         var currentX = startX
 
         for char in text {
@@ -293,9 +287,9 @@ class CelluloidStreamSource: NSObject, CMIOExtensionStreamSource {
                             for sx in 0..<scale {
                                 let x = currentX + colIdx * scale + sx
                                 let y = startY + rowIdx * scale + sy
-                                if x < width && y < height {
+                                if x >= 0 && x < width && y >= 0 && y < height {
                                     let pixelPtr = baseAddress.advanced(by: y * bytesPerRow + x * 4).assumingMemoryBound(to: UInt8.self)
-                                    pixelPtr[0] = 0; pixelPtr[1] = 0; pixelPtr[2] = 0; pixelPtr[3] = 255
+                                    pixelPtr[0] = 200; pixelPtr[1] = 200; pixelPtr[2] = 200; pixelPtr[3] = 255  // Light gray
                                 }
                             }
                         }

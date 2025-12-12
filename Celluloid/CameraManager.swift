@@ -27,16 +27,49 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var availableCameras: [AVCaptureDevice] = []
     @MainActor @Published var selectedCamera: AVCaptureDevice?
 
-    // Adjustment controls
-    @MainActor @Published var brightness: Double = 0.0  // -1.0 to 1.0
-    @MainActor @Published var contrast: Double = 1.0    // 0.25 to 4.0
-    @MainActor @Published var saturation: Double = 1.0  // 0.0 to 2.0
-    @MainActor @Published var exposure: Double = 0.0    // -2.0 to 2.0
-    @MainActor @Published var temperature: Double = 6500 // 2000 to 10000 (Kelvin)
-    @MainActor @Published var sharpness: Double = 0.0    // 0.0 to 2.0
+    // Track what's requesting the camera
+    @MainActor private var previewWindowIsOpen = false
+    @MainActor private var externalAppIsStreaming = false
 
-    // Filter
-    @MainActor @Published var selectedFilter: FilterType = .none
+    // Adjustment controls (persisted)
+    @MainActor @Published var brightness: Double = 0.0 {  // -1.0 to 1.0
+        didSet { saveSettings() }
+    }
+    @MainActor @Published var contrast: Double = 1.0 {    // 0.25 to 4.0
+        didSet { saveSettings() }
+    }
+    @MainActor @Published var saturation: Double = 1.0 {  // 0.0 to 2.0
+        didSet { saveSettings() }
+    }
+    @MainActor @Published var exposure: Double = 0.0 {    // -2.0 to 2.0
+        didSet { saveSettings() }
+    }
+    @MainActor @Published var temperature: Double = 6500 { // 2000 to 10000 (Kelvin)
+        didSet { saveSettings() }
+    }
+    @MainActor @Published var sharpness: Double = 0.0 {    // 0.0 to 2.0
+        didSet { saveSettings() }
+    }
+
+    // Filter (persisted)
+    @MainActor @Published var selectedFilter: FilterType = .none {
+        didSet { saveSettings() }
+    }
+
+    // UserDefaults keys
+    private enum SettingsKey {
+        static let brightness = "celluloid.brightness"
+        static let contrast = "celluloid.contrast"
+        static let saturation = "celluloid.saturation"
+        static let exposure = "celluloid.exposure"
+        static let temperature = "celluloid.temperature"
+        static let sharpness = "celluloid.sharpness"
+        static let filter = "celluloid.filter"
+        static let selectedCameraID = "celluloid.selectedCameraID"
+    }
+
+    // Flag to prevent saving while loading
+    private var isLoadingSettings = false
 
     private let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -51,8 +84,10 @@ class CameraManager: NSObject, ObservableObject {
     private var readyToEnqueue = false
     private let sinkConnectionQueue = DispatchQueue(label: "com.celluloid.sinkConnection")
 
+
     enum FilterType: String, CaseIterable, Identifiable, Sendable {
         case none = "None"
+        case blackMist = "Black Mist"
         case noir = "Noir"
         case chrome = "Chrome"
         case fade = "Fade"
@@ -66,7 +101,7 @@ class CameraManager: NSObject, ObservableObject {
 
         var ciFilterName: String? {
             switch self {
-            case .none: return nil
+            case .none, .blackMist: return nil  // blackMist is handled specially
             case .noir: return "CIPhotoEffectNoir"
             case .chrome: return "CIPhotoEffectChrome"
             case .fade: return "CIPhotoEffectFade"
@@ -79,15 +114,109 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    // Darwin notification names (must match extension)
+    private static let streamStartedNotification = "com.celluloid.streamStarted" as CFString
+    private static let streamStoppedNotification = "com.celluloid.streamStopped" as CFString
+
     override init() {
         super.init()
         Task { @MainActor in
+            loadSettings()
             await checkPermission()
             loadAvailableCameras()
-            if permissionGranted {
-                startSession()
-            }
+            setupDarwinNotifications()
+            // Camera starts OFF - will turn on when external app starts streaming
         }
+    }
+
+    // MARK: - Settings Persistence
+
+    @MainActor
+    private func loadSettings() {
+        isLoadingSettings = true
+        defer { isLoadingSettings = false }
+
+        let defaults = UserDefaults.standard
+
+        if defaults.object(forKey: SettingsKey.brightness) != nil {
+            brightness = defaults.double(forKey: SettingsKey.brightness)
+        }
+        if defaults.object(forKey: SettingsKey.contrast) != nil {
+            contrast = defaults.double(forKey: SettingsKey.contrast)
+        }
+        if defaults.object(forKey: SettingsKey.saturation) != nil {
+            saturation = defaults.double(forKey: SettingsKey.saturation)
+        }
+        if defaults.object(forKey: SettingsKey.exposure) != nil {
+            exposure = defaults.double(forKey: SettingsKey.exposure)
+        }
+        if defaults.object(forKey: SettingsKey.temperature) != nil {
+            temperature = defaults.double(forKey: SettingsKey.temperature)
+        }
+        if defaults.object(forKey: SettingsKey.sharpness) != nil {
+            sharpness = defaults.double(forKey: SettingsKey.sharpness)
+        }
+        if let filterName = defaults.string(forKey: SettingsKey.filter),
+           let filter = FilterType(rawValue: filterName) {
+            selectedFilter = filter
+        }
+    }
+
+    @MainActor
+    private func saveSettings() {
+        guard !isLoadingSettings else { return }
+
+        let defaults = UserDefaults.standard
+        defaults.set(brightness, forKey: SettingsKey.brightness)
+        defaults.set(contrast, forKey: SettingsKey.contrast)
+        defaults.set(saturation, forKey: SettingsKey.saturation)
+        defaults.set(exposure, forKey: SettingsKey.exposure)
+        defaults.set(temperature, forKey: SettingsKey.temperature)
+        defaults.set(sharpness, forKey: SettingsKey.sharpness)
+        defaults.set(selectedFilter.rawValue, forKey: SettingsKey.filter)
+    }
+
+    @MainActor
+    private func setupDarwinNotifications() {
+        let notifyCenter = CFNotificationCenterGetDarwinNotifyCenter()
+
+        // Listen for stream started (external app like Photo Booth selected Celluloid Camera)
+        CFNotificationCenterAddObserver(
+            notifyCenter,
+            Unmanaged.passUnretained(self).toOpaque(),
+            { (center, observer, name, object, userInfo) in
+                guard let observer = observer else { return }
+                let manager = Unmanaged<CameraManager>.fromOpaque(observer).takeUnretainedValue()
+                Task { @MainActor in
+                    logger.info("Received Darwin notification: streamStarted")
+                    manager.externalAppIsStreaming = true
+                    manager.updateCameraState()
+                }
+            },
+            Self.streamStartedNotification,
+            nil,
+            .deliverImmediately
+        )
+
+        // Listen for stream stopped (external app stopped using Celluloid Camera)
+        CFNotificationCenterAddObserver(
+            notifyCenter,
+            Unmanaged.passUnretained(self).toOpaque(),
+            { (center, observer, name, object, userInfo) in
+                guard let observer = observer else { return }
+                let manager = Unmanaged<CameraManager>.fromOpaque(observer).takeUnretainedValue()
+                Task { @MainActor in
+                    logger.info("Received Darwin notification: streamStopped")
+                    manager.externalAppIsStreaming = false
+                    manager.updateCameraState()
+                }
+            },
+            Self.streamStoppedNotification,
+            nil,
+            .deliverImmediately
+        )
+
+        logger.info("Darwin notification observers registered")
     }
 
     @MainActor
@@ -197,6 +326,31 @@ class CameraManager: NSObject, ObservableObject {
         selectedFilter = .none
     }
 
+    // MARK: - Preview Window Control
+
+    @MainActor
+    func previewWindowOpened() {
+        previewWindowIsOpen = true
+        updateCameraState()
+    }
+
+    @MainActor
+    func previewWindowClosed() {
+        previewWindowIsOpen = false
+        updateCameraState()
+    }
+
+    @MainActor
+    private func updateCameraState() {
+        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming
+
+        if shouldBeRunning && !isRunning && permissionGranted {
+            startSession()
+        } else if !shouldBeRunning && isRunning {
+            stopSession()
+        }
+    }
+
     @MainActor
     private func applyFilters(to image: CIImage) -> CIImage {
         var outputImage = image
@@ -247,6 +401,66 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
 
+        // Apply Black Mist filter (special handling)
+        // Emulates a Tiffen Black Pro-Mist: soft highlight bloom, reduced micro-contrast, rich blacks
+        if selectedFilter == .blackMist {
+            let base = outputImage
+            let blurRadius: Double = 12.0
+            let strength: Double = 0.5
+
+            // 1. Create a blurred copy
+            if let blurFilter = CIFilter(name: "CIGaussianBlur") {
+                blurFilter.setValue(base, forKey: kCIInputImageKey)
+                blurFilter.setValue(blurRadius, forKey: kCIInputRadiusKey)
+                if var blurred = blurFilter.outputImage {
+                    blurred = blurred.cropped(to: base.extent)
+
+                    // 2. Slightly lift the blurred layer (bloom the highlights)
+                    if let exposureFilter = CIFilter(name: "CIExposureAdjust") {
+                        exposureFilter.setValue(blurred, forKey: kCIInputImageKey)
+                        exposureFilter.setValue(0.30, forKey: kCIInputEVKey)
+                        if let brightBlur = exposureFilter.outputImage {
+
+                            // 3. Blend with soft light for that dreamy halation
+                            if let blendFilter = CIFilter(name: "CISoftLightBlendMode") {
+                                blendFilter.setValue(brightBlur, forKey: kCIInputImageKey)
+                                blendFilter.setValue(base, forKey: kCIInputBackgroundImageKey)
+                                if let misty = blendFilter.outputImage {
+
+                                    // 4. Mix base + mist using alpha mask for strength control
+                                    let maskColor = CIColor(red: 1, green: 1, blue: 1, alpha: strength)
+                                    if let maskGen = CIFilter(name: "CIConstantColorGenerator") {
+                                        maskGen.setValue(maskColor, forKey: kCIInputColorKey)
+                                        if let mask = maskGen.outputImage?.cropped(to: base.extent) {
+
+                                            if let mixFilter = CIFilter(name: "CIBlendWithAlphaMask") {
+                                                mixFilter.setValue(misty, forKey: kCIInputImageKey)
+                                                mixFilter.setValue(base, forKey: kCIInputBackgroundImageKey)
+                                                mixFilter.setValue(mask, forKey: kCIInputMaskImageKey)
+                                                if let mixed = mixFilter.outputImage {
+
+                                                    // 5. Final subtle contrast/brightness tweak
+                                                    if let controls = CIFilter(name: "CIColorControls") {
+                                                        controls.setValue(mixed, forKey: kCIInputImageKey)
+                                                        controls.setValue(0.95, forKey: kCIInputContrastKey)
+                                                        controls.setValue(0.02, forKey: kCIInputBrightnessKey)
+                                                        controls.setValue(1.02, forKey: kCIInputSaturationKey)
+                                                        if let final = controls.outputImage?.cropped(to: base.extent) {
+                                                            outputImage = final
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Apply photo effect filter
         if let filterName = selectedFilter.ciFilterName,
            let photoFilter = CIFilter(name: filterName) {
@@ -261,9 +475,24 @@ class CameraManager: NSObject, ObservableObject {
 
     // MARK: - CoreMediaIO Sink Stream Connection
 
+    private var sinkConnectionRetries = 0
+    private let maxSinkRetries = 5
+
     private func connectToSinkStream() {
         sinkConnectionQueue.async { [weak self] in
             self?.performSinkStreamConnection()
+        }
+    }
+
+    private func retrySinkConnection() {
+        sinkConnectionRetries += 1
+        if sinkConnectionRetries <= maxSinkRetries {
+            print("Retrying sink connection (attempt \(sinkConnectionRetries)/\(maxSinkRetries))...")
+            sinkConnectionQueue.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.performSinkStreamConnection()
+            }
+        } else {
+            print("Failed to connect to sink stream after \(maxSinkRetries) attempts")
         }
     }
 
@@ -334,7 +563,8 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
 
-        logger.info("Celluloid Camera device not found - extension may not be loaded")
+        print("Celluloid Camera device not found - will retry")
+        retrySinkConnection()
     }
 
     private func getDeviceName(_ deviceID: CMIODeviceID) -> String? {
@@ -427,6 +657,8 @@ class CameraManager: NSObject, ObservableObject {
     private func connectToStream(_ streamID: CMIOStreamID) {
         self.sinkStreamID = streamID
 
+        logger.info("Attempting to connect to sink stream ID: \(streamID)")
+
         let refCon = Unmanaged.passUnretained(self).toOpaque()
         var queue: Unmanaged<CMSimpleQueue>?
 
@@ -436,20 +668,27 @@ class CameraManager: NSObject, ObservableObject {
                 guard let refcon = refcon else { return }
                 let manager = Unmanaged<CameraManager>.fromOpaque(refcon).takeUnretainedValue()
                 manager.readyToEnqueue = true
+                print("Sink stream callback - ready to enqueue next frame")
             },
             refCon,
             &queue
         )
 
+        logger.info("CMIOStreamCopyBufferQueue status: \(status)")
+
         if status == noErr, let simpleQueue = queue?.takeRetainedValue() {
             self.sinkQueue = simpleQueue
+            logger.info("Got buffer queue, starting sink stream...")
 
             let startStatus = CMIODeviceStartStream(sinkDeviceID, streamID)
+
+            logger.info("CMIODeviceStartStream status: \(startStatus)")
 
             if startStatus == noErr {
                 self.isConnectedToSinkStream = true
                 self.readyToEnqueue = true
-                logger.info("Connected to sink stream")
+                self.sinkConnectionRetries = 0  // Reset retry counter on success
+                logger.info("Successfully connected to sink stream and ready to send frames")
             } else {
                 logger.error("Failed to start sink stream: \(startStatus)")
             }
@@ -459,6 +698,7 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     private var framesSentCount = 0
+    private var lastLoggedFrameCount = 0
 
     private func sendFrameToSinkStream(_ sampleBuffer: CMSampleBuffer) {
         guard isConnectedToSinkStream, let queue = sinkQueue else {
@@ -468,7 +708,13 @@ class CameraManager: NSObject, ObservableObject {
             return
         }
 
-        guard readyToEnqueue else { return }
+        guard readyToEnqueue else {
+            // Log periodically when we're waiting
+            if framesSentCount > 0 && framesSentCount == lastLoggedFrameCount {
+                // We've sent frames before but are now blocked
+            }
+            return
+        }
 
         readyToEnqueue = false
 
@@ -478,6 +724,10 @@ class CameraManager: NSObject, ObservableObject {
             readyToEnqueue = true
         } else {
             framesSentCount += 1
+            if framesSentCount % 30 == 0 {
+                logger.info("Sent \(self.framesSentCount) frames to sink stream")
+                lastLoggedFrameCount = framesSentCount
+            }
         }
     }
 

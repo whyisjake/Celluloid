@@ -9,11 +9,10 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var cameraManager: CameraManager
-    @StateObject private var extensionManager = ExtensionManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
+            // Header (fixed at top)
             HStack {
                 Text("Celluloid")
                     .font(.headline)
@@ -32,52 +31,50 @@ struct ContentView: View {
             Divider()
 
             if cameraManager.permissionGranted {
-                // Virtual Camera section (always show for install/update)
-                VirtualCameraSection(extensionManager: extensionManager)
-                    .padding()
-
-                Divider()
-
-                // Camera Preview
-                CameraPreviewView(image: cameraManager.currentFrame)
-                    .frame(width: 320, height: 180)
-                    .cornerRadius(8)
-                    .padding()
-
-                // Camera selector
-                if cameraManager.availableCameras.count > 1 {
-                    Picker("Camera", selection: Binding(
-                        get: { cameraManager.selectedCamera },
-                        set: { if let device = $0 { cameraManager.switchCamera(to: device) } }
-                    )) {
-                        ForEach(cameraManager.availableCameras, id: \.uniqueID) { camera in
-                            Text(camera.localizedName).tag(camera as AVCaptureDevice?)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .padding(.horizontal)
-                }
-
-                Divider()
-                    .padding(.vertical, 8)
-
-                // Controls
+                // Scrollable content
                 ScrollView {
-                    VStack(spacing: 16) {
-                        // Adjustments Section
-                        AdjustmentsSection(cameraManager: cameraManager)
+                    VStack(spacing: 0) {
+                        // Camera Preview (mirrored like a mirror)
+                        CameraPreviewView(image: cameraManager.currentFrame)
+                            .scaleEffect(x: -1, y: 1)
+                            .frame(width: 320, height: 180)
+                            .cornerRadius(8)
+                            .padding()
+
+                        // Camera selector
+                        if cameraManager.availableCameras.count > 1 {
+                            Picker("Camera", selection: Binding(
+                                get: { cameraManager.selectedCamera },
+                                set: { if let device = $0 { cameraManager.switchCamera(to: device) } }
+                            )) {
+                                ForEach(cameraManager.availableCameras, id: \.uniqueID) { camera in
+                                    Text(camera.localizedName).tag(camera as AVCaptureDevice?)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .padding(.horizontal)
+                        }
 
                         Divider()
+                            .padding(.vertical, 8)
+
+                        // Adjustments Section
+                        AdjustmentsSection(cameraManager: cameraManager)
+                            .padding(.horizontal)
+
+                        Divider()
+                            .padding(.vertical, 8)
 
                         // Filters Section
                         FiltersSection(cameraManager: cameraManager)
+                            .padding(.horizontal)
+                            .padding(.bottom)
                     }
-                    .padding()
                 }
 
                 Divider()
 
-                // Bottom controls
+                // Bottom controls (fixed at bottom)
                 HStack {
                     Button(action: {
                         cameraManager.resetAdjustments()
@@ -93,7 +90,7 @@ struct ContentView: View {
                         Circle()
                             .fill(cameraManager.isRunning ? Color.green : Color.red)
                             .frame(width: 8, height: 8)
-                        Text(cameraManager.isRunning ? "Camera Active" : "Camera Off")
+                        Text(cameraManager.isRunning ? "Active" : "Standby")
                             .font(.caption)
                             .foregroundColor(.secondary)
                     }
@@ -124,14 +121,12 @@ struct ContentView: View {
                 .padding(32)
             }
         }
-        .frame(width: 360)
+        .frame(width: 360, height: 700)
         .onAppear {
-            if cameraManager.permissionGranted {
-                cameraManager.startSession()
-            }
+            cameraManager.previewWindowOpened()
         }
         .onDisappear {
-            cameraManager.stopSession()
+            cameraManager.previewWindowClosed()
         }
     }
 }
