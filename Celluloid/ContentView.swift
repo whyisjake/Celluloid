@@ -343,6 +343,20 @@ struct LUTSection: View {
     @ObservedObject var cameraManager: CameraManager
     @State private var availableLUTs: [String] = []
 
+    // Acronyms that should stay uppercase
+    private let acronyms = ["CCD", "HD", "II", "BW"]
+
+    private func formatLUTName(_ name: String) -> String {
+        let words = name.replacingOccurrences(of: "_", with: " ").components(separatedBy: " ")
+        return words.map { word in
+            let upper = word.uppercased()
+            if acronyms.contains(upper) {
+                return upper
+            }
+            return word.capitalized
+        }.joined(separator: " ")
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Film LUTs")
@@ -355,7 +369,7 @@ struct LUTSection: View {
             )) {
                 Text("None").tag("None")
                 ForEach(availableLUTs, id: \.self) { lut in
-                    Text(lut.replacingOccurrences(of: "_", with: " ").capitalized)
+                    Text(formatLUTName(lut))
                         .tag(lut)
                 }
             }
