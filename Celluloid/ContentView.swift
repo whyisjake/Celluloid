@@ -68,6 +68,13 @@ struct ContentView: View {
                         // Filters Section
                         FiltersSection(cameraManager: cameraManager)
                             .padding(.horizontal)
+
+                        Divider()
+                            .padding(.vertical, 8)
+
+                        // LUT Section
+                        LUTSection(cameraManager: cameraManager)
+                            .padding(.horizontal)
                             .padding(.bottom)
                     }
                 }
@@ -328,6 +335,45 @@ struct VirtualCameraSection: View {
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
+        }
+    }
+}
+
+struct LUTSection: View {
+    @ObservedObject var cameraManager: CameraManager
+
+    // List of common photography/film acronyms that should remain uppercase in LUT preset names.
+    // Add to this list any acronyms that are expected to appear in LUT file names and should not be capitalized as regular words.
+    private let acronyms = ["CCD", "HD", "II", "BW"]
+
+    private func formatLUTName(_ name: String) -> String {
+        let words = name.replacingOccurrences(of: "_", with: " ").components(separatedBy: " ")
+        return words.map { word in
+            let upper = word.uppercased()
+            if acronyms.contains(upper) {
+                return upper
+            }
+            return word.capitalized
+        }.joined(separator: " ")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Film LUTs")
+                .font(.subheadline)
+                .fontWeight(.semibold)
+
+            Picker("LUT", selection: Binding(
+                get: { cameraManager.selectedLUT ?? "None" },
+                set: { cameraManager.selectedLUT = $0 == "None" ? nil : $0 }
+            )) {
+                Text("None").tag("None")
+                ForEach(cameraManager.availableLUTs) { lut in
+                    Text(formatLUTName(lut.name))
+                        .tag(lut.name)
+                }
+            }
+            .pickerStyle(.menu)
         }
     }
 }

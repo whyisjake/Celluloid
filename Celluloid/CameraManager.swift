@@ -20,6 +20,148 @@ struct CelluloidShared {
     static let height = 720
 }
 
+// MARK: - HALD CLUT Constants
+struct HALDConstants {
+    static let imageSize = 512       // 512x512 HALD image
+    static let cubeDimension = 64    // 64x64x64 color cube
+    static let gridSize = 8          // 8x8 grid of 64x64 blocks
+}
+
+// MARK: - LUT Info
+struct LUTInfo: Hashable, Identifiable {
+    let name: String
+    let subdirectory: String?  // Subdirectory path relative to bundle resources (e.g., "LUT_pack" or "LUT_pack/Film Presets")
+    let fileExtension: String  // "cube" or "png"
+    
+    // Use composite ID to ensure uniqueness (subdirectory is always set in our usage)
+    var id: String { "\(subdirectory ?? "")/\(name).\(fileExtension)" }
+}
+
+// MARK: - Cube LUT Parser (Testable)
+struct CubeLUTParser {
+    enum ParseError: Error, Equatable {
+        case emptyFile
+        case missingLUTSize
+        case invalidLUTSize
+        case incorrectValueCount(expected: Int, actual: Int)
+        case invalidRGBValues
+    }
+
+    struct ParseResult {
+        let dimension: Int
+        let data: Data
+    }
+
+    /// Parse a .cube file content and return the LUT data
+    static func parse(_ content: String) -> Result<ParseResult, ParseError> {
+        let lines = content.components(separatedBy: .newlines)
+        var dimension = 0
+        var cubeValues: [Float] = []
+        var hasContent = false
+
+        for line in lines {
+            let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+            // Skip empty lines and comments/metadata
+            if trimmed.isEmpty || trimmed.hasPrefix("#") || trimmed.hasPrefix("TITLE") ||
+               trimmed.hasPrefix("DOMAIN_MIN") || trimmed.hasPrefix("DOMAIN_MAX") {
+                continue
+            }
+
+            hasContent = true
+
+            // Parse LUT size
+            if trimmed.hasPrefix("LUT_3D_SIZE") {
+                let parts = trimmed.split(separator: " ")
+                if parts.count >= 2, let size = Int(parts[1]), size > 0 {
+                    dimension = size
+                } else {
+                    return .failure(.invalidLUTSize)
+                }
+                continue
+            }
+
+            // Parse RGB values
+            let components = trimmed.split(separator: " ").compactMap { Float($0) }
+            if components.count >= 3 {
+                cubeValues.append(components[0])
+                cubeValues.append(components[1])
+                cubeValues.append(components[2])
+                cubeValues.append(1.0)  // Alpha
+            }
+        }
+
+        if !hasContent {
+            return .failure(.emptyFile)
+        }
+
+        guard dimension > 0 else {
+            return .failure(.missingLUTSize)
+        }
+
+        let expectedCount = dimension * dimension * dimension * 4
+        guard cubeValues.count == expectedCount else {
+            return .failure(.incorrectValueCount(expected: expectedCount, actual: cubeValues.count))
+        }
+
+        let data = Data(bytes: cubeValues, count: cubeValues.count * MemoryLayout<Float>.size)
+        return .success(ParseResult(dimension: dimension, data: data))
+    }
+}
+
+// MARK: - HALD CLUT Parser (Testable)
+struct HALDCLUTParser {
+    enum ParseError: Error, Equatable {
+        case invalidImageSize(width: Int, height: Int)
+        case failedToCreateContext
+        case failedToLoadImage
+    }
+
+    struct ParseResult {
+        let dimension: Int
+        let data: Data
+    }
+
+    /// Validate HALD image dimensions
+    static func validateDimensions(width: Int, height: Int) -> Bool {
+        return width == HALDConstants.imageSize && height == HALDConstants.imageSize
+    }
+
+    /// Convert pixel data from a 512x512 HALD image to color cube data
+    static func convertPixelData(_ pixelData: [UInt8], width: Int, height: Int) -> Result<ParseResult, ParseError> {
+        guard validateDimensions(width: width, height: height) else {
+            return .failure(.invalidImageSize(width: width, height: height))
+        }
+
+        let dimension = HALDConstants.cubeDimension
+        let gridSize = HALDConstants.gridSize
+        let bytesPerPixel = 4
+        var cubeData = [Float](repeating: 0, count: dimension * dimension * dimension * 4)
+
+        for b in 0..<dimension {
+            for g in 0..<dimension {
+                for r in 0..<dimension {
+                    // Calculate position in HALD image
+                    let blockX = (b % gridSize) * dimension + r
+                    let blockY = (b / gridSize) * dimension + g
+
+                    let pixelIndex = (blockY * width + blockX) * bytesPerPixel
+                    let cubeIndex = (b * dimension * dimension + g * dimension + r) * 4
+
+                    // Normalize to 0-1 range
+                    cubeData[cubeIndex + 0] = Float(pixelData[pixelIndex + 0]) / 255.0  // R
+                    cubeData[cubeIndex + 1] = Float(pixelData[pixelIndex + 1]) / 255.0  // G
+                    cubeData[cubeIndex + 2] = Float(pixelData[pixelIndex + 2]) / 255.0  // B
+                    cubeData[cubeIndex + 3] = 1.0  // A
+                }
+            }
+        }
+
+        let data = Data(bytes: cubeData, count: cubeData.count * MemoryLayout<Float>.size)
+        return .success(ParseResult(dimension: dimension, data: data))
+    }
+}
+
 class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var currentFrame: CGImage?
     @MainActor @Published var isRunning = false
@@ -56,6 +198,28 @@ class CameraManager: NSObject, ObservableObject {
         didSet { saveSettings() }
     }
 
+    // LUT support
+    @MainActor @Published var availableLUTs: [LUTInfo] = []
+    @MainActor @Published var selectedLUT: String? = nil {
+        didSet {
+            if let lutName = selectedLUT {
+                loadLUT(named: lutName)
+            } else {
+                currentLUTData = nil
+                currentLUTDimension = 64
+            }
+            saveSettings()
+        }
+    }
+    @MainActor private var currentLUTData: Data?
+    
+    // Helper to find LUT info by name
+    @MainActor
+    private func lutInfo(for name: String) -> LUTInfo? {
+        availableLUTs.first { $0.name == name }
+    }
+    @MainActor private var currentLUTDimension: Int = 64
+
     // UserDefaults keys
     private enum SettingsKey {
         static let brightness = "celluloid.brightness"
@@ -66,6 +230,7 @@ class CameraManager: NSObject, ObservableObject {
         static let sharpness = "celluloid.sharpness"
         static let filter = "celluloid.filter"
         static let selectedCameraID = "celluloid.selectedCameraID"
+        static let selectedLUT = "celluloid.selectedLUT"
     }
 
     // Flag to prevent saving while loading
@@ -121,6 +286,7 @@ class CameraManager: NSObject, ObservableObject {
     override init() {
         super.init()
         Task { @MainActor in
+            loadAvailableLUTs()
             loadSettings()
             await checkPermission()
             loadAvailableCameras()
@@ -160,6 +326,9 @@ class CameraManager: NSObject, ObservableObject {
            let filter = FilterType(rawValue: filterName) {
             selectedFilter = filter
         }
+        if let lutName = defaults.string(forKey: SettingsKey.selectedLUT) {
+            selectedLUT = lutName
+        }
     }
 
     @MainActor
@@ -174,6 +343,7 @@ class CameraManager: NSObject, ObservableObject {
         defaults.set(temperature, forKey: SettingsKey.temperature)
         defaults.set(sharpness, forKey: SettingsKey.sharpness)
         defaults.set(selectedFilter.rawValue, forKey: SettingsKey.filter)
+        defaults.set(selectedLUT, forKey: SettingsKey.selectedLUT)
     }
 
     @MainActor
@@ -187,10 +357,16 @@ class CameraManager: NSObject, ObservableObject {
             { (center, observer, name, object, userInfo) in
                 guard let observer = observer else { return }
                 let manager = Unmanaged<CameraManager>.fromOpaque(observer).takeUnretainedValue()
-                Task { @MainActor in
-                    logger.info("Received Darwin notification: streamStarted")
-                    manager.externalAppIsStreaming = true
-                    manager.updateCameraState()
+                // Darwin notification: streamStarted received
+                // Use DispatchQueue.main for more reliable background execution
+                DispatchQueue.main.async {
+                    Task { @MainActor in
+                        let wasStreaming = manager.externalAppIsStreaming
+                        let wasRunning = manager.isRunning
+                        manager.externalAppIsStreaming = true
+                        manager.updateCameraState()
+                        logger.info("streamStarted: externalAppIsStreaming changed from \(wasStreaming) to \(manager.externalAppIsStreaming), isRunning changed from \(wasRunning) to \(manager.isRunning)")
+                    }
                 }
             },
             Self.streamStartedNotification,
@@ -205,10 +381,13 @@ class CameraManager: NSObject, ObservableObject {
             { (center, observer, name, object, userInfo) in
                 guard let observer = observer else { return }
                 let manager = Unmanaged<CameraManager>.fromOpaque(observer).takeUnretainedValue()
-                Task { @MainActor in
-                    logger.info("Received Darwin notification: streamStopped")
-                    manager.externalAppIsStreaming = false
-                    manager.updateCameraState()
+                logger.info("Darwin notification: streamStopped received")
+                DispatchQueue.main.async {
+                    Task { @MainActor in
+                        logger.info("Processing streamStopped - externalAppIsStreaming was: \(manager.externalAppIsStreaming)")
+                        manager.externalAppIsStreaming = false
+                        manager.updateCameraState()
+                    }
                 }
             },
             Self.streamStoppedNotification,
@@ -298,8 +477,21 @@ class CameraManager: NSObject, ObservableObject {
         sessionQueue.async { [weak self] in
             guard let self = self else { return }
             self.captureSession.stopRunning()
+
+            // Reset sink stream connection state so we reconnect on next start
+            self.sinkConnectionQueue.sync {
+                self.isConnectedToSinkStream = false
+                self.sinkQueue = nil
+                self.sinkStreamID = 0
+                self.sinkDeviceID = 0
+                self.readyToEnqueue = false
+                self.sinkConnectionRetries = 0
+                self.framesDroppedSinceLastSend = 0
+            }
+
             Task { @MainActor [weak self] in
                 self?.isRunning = false
+                logger.info("Camera session stopped, sink stream connection reset")
             }
         }
     }
@@ -326,6 +518,161 @@ class CameraManager: NSObject, ObservableObject {
         selectedFilter = .none
     }
 
+    // MARK: - LUT Support
+
+    /// Helper to collect LUT files from a directory
+    private func collectLUTs(from subdirectory: String, extensions: [String]) -> [LUTInfo] {
+        guard let resourcePath = Bundle.main.resourcePath else {
+            return []
+        }
+        
+        let directoryURL = URL(fileURLWithPath: resourcePath).appendingPathComponent(subdirectory)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: directoryURL.path) else {
+            return []
+        }
+        
+        return extensions.flatMap { ext in
+            files.filter { $0.hasSuffix("." + ext) }.map { filename in
+                let name = String(filename.dropLast(ext.count + 1))  // Remove .ext safely
+                return LUTInfo(name: name,
+                              subdirectory: subdirectory,
+                              fileExtension: ext)
+            }
+        }
+    }
+
+    @MainActor
+    private func loadAvailableLUTs() {
+        var luts: [LUTInfo] = []
+
+        // Check root LUT_pack for .cube and .png files
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack", extensions: ["cube", "png"]))
+        
+        // Check Film Presets
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Film Presets", extensions: ["png"]))
+        
+        // Check Webcam Presets
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Webcam Presets", extensions: ["png"]))
+        
+        // Check Contrast Filters
+        luts.append(contentsOf: collectLUTs(from: "LUT_pack/Contrast Filters", extensions: ["png"]))
+
+        availableLUTs = luts.sorted { $0.name < $1.name }
+    }
+
+    @MainActor
+    private func loadLUT(named name: String) {
+        // Find the LUT info with stored path
+        guard let info = lutInfo(for: name) else {
+            logger.error("LUT not found in availableLUTs: \(name)")
+            currentLUTData = nil
+            return
+        }
+        
+        // Use stored subdirectory to avoid redundant lookups
+        guard let lutURL = Bundle.main.url(forResource: info.name, 
+                                           withExtension: info.fileExtension, 
+                                           subdirectory: info.subdirectory) else {
+            logger.error("LUT file not found: \(name) in \(info.subdirectory ?? "root")")
+            currentLUTData = nil
+            return
+        }
+        
+        if info.fileExtension == "cube" {
+            loadCubeLUT(from: lutURL, name: name)
+        } else {
+            loadPNGHaldLUT(from: lutURL, name: name)
+        }
+    }
+
+    @MainActor
+    private func loadCubeLUT(from url: URL, name: String) {
+        // Move file reading and parsing to a background queue to avoid UI freezes
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+                logger.error("Failed to read .cube file: \(name)")
+                DispatchQueue.main.async {
+                    self?.currentLUTData = nil
+                }
+                return
+            }
+
+            switch CubeLUTParser.parse(content) {
+            case .success(let result):
+                logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
+                DispatchQueue.main.async {
+                    self?.currentLUTDimension = result.dimension
+                    self?.currentLUTData = result.data
+                }
+            case .failure(let error):
+                logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
+                DispatchQueue.main.async {
+                    self?.currentLUTData = nil
+                }
+            }
+        }
+    }
+
+    @MainActor
+    private func loadPNGHaldLUT(from url: URL, name: String) {
+        guard let lutImage = NSImage(contentsOf: url),
+              let cgImage = lutImage.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            logger.error("Failed to load LUT image: \(name)")
+            currentLUTData = nil
+            return
+        }
+
+        let width = cgImage.width
+        let height = cgImage.height
+
+        guard HALDCLUTParser.validateDimensions(width: width, height: height) else {
+            logger.error("LUT must be \(HALDConstants.imageSize)x\(HALDConstants.imageSize), got \(width)x\(height)")
+            currentLUTData = nil
+            return
+        }
+
+        // Move the heavy conversion to a background queue
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Create bitmap context to extract pixel data
+            let bytesPerPixel = 4
+            let bytesPerRow = width * bytesPerPixel
+            var pixelData = [UInt8](repeating: 0, count: width * height * bytesPerPixel)
+
+            guard let context = CGContext(
+                data: &pixelData,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                DispatchQueue.main.async {
+                    logger.error("Failed to create context for LUT")
+                    self?.currentLUTData = nil
+                }
+                return
+            }
+
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+            // Use the testable parser for conversion
+            switch HALDCLUTParser.convertPixelData(pixelData, width: width, height: height) {
+            case .success(let result):
+                DispatchQueue.main.async {
+                    self?.currentLUTDimension = result.dimension
+                    self?.currentLUTData = result.data
+                    logger.info("Loaded HALD LUT: \(name)")
+                }
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    logger.error("Failed to convert HALD LUT '\(name)': \(String(describing: error))")
+                    self?.currentLUTData = nil
+                }
+            }
+        }
+    }
+
     // MARK: - Preview Window Control
 
     @MainActor
@@ -343,10 +690,13 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor
     private func updateCameraState() {
         let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming
+        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
 
         if shouldBeRunning && !isRunning && permissionGranted {
+            logger.info("Starting camera session...")
             startSession()
         } else if !shouldBeRunning && isRunning {
+            logger.info("Stopping camera session...")
             stopSession()
         }
     }
@@ -466,6 +816,18 @@ class CameraManager: NSObject, ObservableObject {
            let photoFilter = CIFilter(name: filterName) {
             photoFilter.setValue(outputImage, forKey: kCIInputImageKey)
             if let result = photoFilter.outputImage {
+                outputImage = result
+            }
+        }
+
+        // Apply LUT if selected
+        if let lutData = currentLUTData,
+           let lutFilter = CIFilter(name: "CIColorCubeWithColorSpace") {
+            lutFilter.setValue(outputImage, forKey: kCIInputImageKey)
+            lutFilter.setValue(currentLUTDimension, forKey: "inputCubeDimension")
+            lutFilter.setValue(lutData, forKey: "inputCubeData")
+            lutFilter.setValue(CGColorSpaceCreateDeviceRGB(), forKey: "inputColorSpace")
+            if let result = lutFilter.outputImage {
                 outputImage = result
             }
         }
@@ -699,23 +1061,36 @@ class CameraManager: NSObject, ObservableObject {
 
     private var framesSentCount = 0
     private var lastLoggedFrameCount = 0
+    private var framesDroppedSinceLastSend = 0
+    
+    /// Maximum number of consecutive dropped frames before forcing a reconnection.
+    /// Set to 60 frames, which represents approximately 2 seconds at 30fps.
+    private let maxDroppedFramesBeforeReconnect = 60
 
     private func sendFrameToSinkStream(_ sampleBuffer: CMSampleBuffer) {
         guard isConnectedToSinkStream, let queue = sinkQueue else {
             if !isConnectedToSinkStream {
+                logger.info("Not connected to sink stream, attempting connection...")
                 connectToSinkStream()
             }
             return
         }
 
         guard readyToEnqueue else {
-            // Log periodically when we're waiting
-            if framesSentCount > 0 && framesSentCount == lastLoggedFrameCount {
-                // We've sent frames before but are now blocked
+            framesDroppedSinceLastSend += 1
+            // If we've dropped too many frames, force reconnection
+            if framesDroppedSinceLastSend > maxDroppedFramesBeforeReconnect {
+                logger.warning("Dropped \(self.framesDroppedSinceLastSend) frames, forcing reconnection")
+                isConnectedToSinkStream = false
+                sinkQueue = nil
+                readyToEnqueue = false
+                framesDroppedSinceLastSend = 0
+                connectToSinkStream()
             }
             return
         }
 
+        framesDroppedSinceLastSend = 0
         readyToEnqueue = false
 
         let enqueueStatus = CMSimpleQueueEnqueue(queue, element: Unmanaged.passRetained(sampleBuffer).toOpaque())

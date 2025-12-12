@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		F5FB212F2EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = F5FB21252EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
+		F5FB21602EEB700000DC1D6E /* LUT_pack in Resources */ = {isa = PBXBuildFile; fileRef = F5FB21612EEB700000DC1D6E /* LUT_pack */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -53,7 +54,18 @@
 		F5FB20BB2EEB46DB00DC1D6E /* CelluloidTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CelluloidTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F5FB20C52EEB46DB00DC1D6E /* CelluloidUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = CelluloidUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		F5FB21252EEB4D9000DC1D6E /* jakespurlock.Celluloid.CelluloidCameraExtension.systemextension */ = {isa = PBXFileReference; explicitFileType = "wrapper.system-extension"; includeInIndex = 0; path = jakespurlock.Celluloid.CelluloidCameraExtension.systemextension; sourceTree = BUILT_PRODUCTS_DIR; };
+		F5FB21612EEB700000DC1D6E /* LUT_pack */ = {isa = PBXFileReference; lastKnownFileType = folder; path = LUT_pack; sourceTree = "<group>"; };
 /* End PBXFileReference section */
+
+/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+		F5FB21502EEB600000DC1D6E /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = F5FB21242EEB4D9000DC1D6E /* CelluloidCameraExtension */;
+		};
+/* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
 		F5FB20AE2EEB46D800DC1D6E /* Celluloid */ = {
@@ -73,6 +85,9 @@
 		};
 		F5FB21262EEB4D9000DC1D6E /* CelluloidCameraExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				F5FB21502EEB600000DC1D6E /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+			);
 			path = CelluloidCameraExtension;
 			sourceTree = "<group>";
 		};
@@ -117,6 +132,7 @@
 				F5FB20BE2EEB46DB00DC1D6E /* CelluloidTests */,
 				F5FB20C82EEB46DB00DC1D6E /* CelluloidUITests */,
 				F5FB21262EEB4D9000DC1D6E /* CelluloidCameraExtension */,
+				F5FB21612EEB700000DC1D6E /* LUT_pack */,
 				F5FB20AD2EEB46D800DC1D6E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -143,15 +159,17 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app",
 			);
 			name = "Install to Applications";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"/Applications/$(PRODUCT_NAME).app",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "# Install to /Applications after build\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    rm -rf /Applications/Celluloid.app\n    cp -R \"$BUILT_PRODUCTS_DIR/Celluloid.app\" /Applications/\n    echo \"Installed Celluloid.app to /Applications\"\nfi\n";
+			shellScript = "# Install to /Applications after build (Release only)\n# NOTE: This script requires ENABLE_USER_SCRIPT_SANDBOXING=NO because it writes to /Applications\n# This is intentional for development convenience. For distribution, use Xcode's archive/export.\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    rm -rf /Applications/Celluloid.app\n    cp -R \"$BUILT_PRODUCTS_DIR/Celluloid.app\" /Applications/\n    echo \"Installed Celluloid.app to /Applications\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -302,6 +320,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F5FB21602EEB700000DC1D6E /* LUT_pack in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
