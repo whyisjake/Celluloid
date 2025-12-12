@@ -2,12 +2,19 @@
 
 A macOS virtual camera app that captures your webcam feed, applies real-time filters, and outputs to a virtual camera for use in video conferencing apps like Zoom, Google Meet, and FaceTime.
 
+<p align="center">
+  <img src="screenshots/app.png" alt="Celluloid Screenshot" width="400">
+</p>
+
 ## Features
 
-- Real-time camera filters (Noir, Chrome, Fade, Instant, Mono, etc.)
-- Adjustable brightness, contrast, saturation, exposure, and color temperature
-- Works with any app that supports camera input
-- Menubar app for easy access
+- **Real-time filters** - Noir, Chrome, Fade, Instant, Mono, Process, Tonal, Transfer, and Black Mist (Tiffen Pro-Mist emulation)
+- **Adjustments** - Brightness, contrast, saturation, exposure, color temperature, and sharpness
+- **Persistent settings** - Your adjustments and filter selection are saved between sessions
+- **Smart activation** - Camera only runs when the preview window is open or an external app is using the virtual camera
+- **Mirrored preview** - Preview shows a mirrored view like looking in a mirror
+- **Menubar app** - Lives in your menubar for quick access
+- **Works everywhere** - Compatible with Zoom, Google Meet, FaceTime, Photo Booth, and any app that supports camera input
 
 ## Architecture
 
@@ -27,15 +34,22 @@ A macOS virtual camera app that captures your webcam feed, applies real-time fil
 
 ## Requirements
 
-- macOS 13.0 or later
+- macOS 15.0 or later
 - Camera access permission
 
 ## Installation
 
-1. Build the project in Xcode
-2. Move Celluloid.app to /Applications
-3. Launch the app and approve the system extension when prompted
-4. Select "Celluloid Camera" in your video app's camera settings
+### From Source
+1. Clone the repository
+2. Open `Celluloid.xcodeproj` in Xcode
+3. Build with Release configuration (⌘+Shift+B) - automatically installs to `/Applications`
+4. Launch the app from `/Applications` and approve the system extension when prompted
+5. Select "Celluloid Camera" in your video app's camera settings
+
+### Usage
+- Click the camera icon in your menubar to open the control panel
+- Adjust sliders and select filters - changes apply in real-time
+- Close the panel when done - the virtual camera continues working for external apps
 
 ## Future Enhancements
 
@@ -57,6 +71,14 @@ A macOS virtual camera app that captures your webcam feed, applies real-time fil
 - Recording/snapshot capability
 - Preset management for filter combinations
 - Keyboard shortcuts for quick filter switching
+
+## Author
+
+Made with ❤️ in California by [Jake Spurlock](https://jakespurlock.com)
+
+- [Twitter](https://twitter.com/whyisjake)
+- [GitHub](https://github.com/whyisjake)
+- [LinkedIn](https://www.linkedin.com/in/jakespurlock)
 
 ## License
 
