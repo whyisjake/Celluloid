@@ -341,7 +341,6 @@ struct VirtualCameraSection: View {
 
 struct LUTSection: View {
     @ObservedObject var cameraManager: CameraManager
-    @State private var availableLUTs: [String] = []
 
     // Acronyms that should stay uppercase
     private let acronyms = ["CCD", "HD", "II", "BW"]
@@ -368,15 +367,12 @@ struct LUTSection: View {
                 set: { cameraManager.selectedLUT = $0 == "None" ? nil : $0 }
             )) {
                 Text("None").tag("None")
-                ForEach(availableLUTs, id: \.self) { lut in
+                ForEach(cameraManager.availableLUTs, id: \.self) { lut in
                     Text(formatLUTName(lut))
                         .tag(lut)
                 }
             }
             .pickerStyle(.menu)
-        }
-        .onAppear {
-            availableLUTs = cameraManager.getAvailableLUTs()
         }
     }
 }
