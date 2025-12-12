@@ -189,6 +189,7 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     // LUT support
+    @MainActor @Published var availableLUTs: [String] = []
     @MainActor @Published var selectedLUT: String? = nil {
         didSet {
             if let lutName = selectedLUT {
@@ -269,6 +270,7 @@ class CameraManager: NSObject, ObservableObject {
     override init() {
         super.init()
         Task { @MainActor in
+            loadAvailableLUTs()
             loadSettings()
             await checkPermission()
             loadAvailableCameras()
@@ -503,7 +505,7 @@ class CameraManager: NSObject, ObservableObject {
     // MARK: - LUT Support
 
     @MainActor
-    func getAvailableLUTs() -> [String] {
+    private func loadAvailableLUTs() {
         var luts: [String] = []
 
         // Check root LUT_pack for .cube and .png files
@@ -531,7 +533,7 @@ class CameraManager: NSObject, ObservableObject {
             luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
         }
 
-        return luts.sorted()
+        availableLUTs = luts.sorted()
     }
 
     @MainActor
