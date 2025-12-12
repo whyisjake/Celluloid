@@ -65,6 +65,7 @@ class CameraManager: NSObject, ObservableObject {
                 currentLUTData = nil
                 currentLUTDimension = 64
             }
+            saveSettings()
         }
     }
     @MainActor private var currentLUTData: Data?
@@ -80,6 +81,7 @@ class CameraManager: NSObject, ObservableObject {
         static let sharpness = "celluloid.sharpness"
         static let filter = "celluloid.filter"
         static let selectedCameraID = "celluloid.selectedCameraID"
+        static let selectedLUT = "celluloid.selectedLUT"
     }
 
     // Flag to prevent saving while loading
@@ -174,6 +176,9 @@ class CameraManager: NSObject, ObservableObject {
            let filter = FilterType(rawValue: filterName) {
             selectedFilter = filter
         }
+        if let lutName = defaults.string(forKey: SettingsKey.selectedLUT) {
+            selectedLUT = lutName
+        }
     }
 
     @MainActor
@@ -188,6 +193,7 @@ class CameraManager: NSObject, ObservableObject {
         defaults.set(temperature, forKey: SettingsKey.temperature)
         defaults.set(sharpness, forKey: SettingsKey.sharpness)
         defaults.set(selectedFilter.rawValue, forKey: SettingsKey.filter)
+        defaults.set(selectedLUT, forKey: SettingsKey.selectedLUT)
     }
 
     @MainActor
