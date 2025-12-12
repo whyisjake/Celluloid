@@ -365,6 +365,7 @@ struct CelluloidTests {
     }
 
     @Test func cubeLUTParserPreservesRGBValues() {
+        let tolerance: Float = 0.001
         let cubeContent = """
         LUT_3D_SIZE 2
         0.1 0.2 0.3
@@ -383,9 +384,9 @@ struct CelluloidTests {
             // Verify first RGB value is preserved
             parseResult.data.withUnsafeBytes { buffer in
                 let floats = buffer.bindMemory(to: Float.self)
-                #expect(abs(floats[0] - 0.1) < 0.001) // R
-                #expect(abs(floats[1] - 0.2) < 0.001) // G
-                #expect(abs(floats[2] - 0.3) < 0.001) // B
+                #expect(abs(floats[0] - 0.1) < tolerance) // R
+                #expect(abs(floats[1] - 0.2) < tolerance) // G
+                #expect(abs(floats[2] - 0.3) < tolerance) // B
                 #expect(floats[3] == 1.0) // Alpha should be 1.0
             }
         case .failure:
