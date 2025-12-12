@@ -33,8 +33,8 @@ struct LUTInfo: Hashable, Identifiable {
     let subdirectory: String?  // Subdirectory path relative to bundle resources (e.g., "LUT_pack" or "LUT_pack/Film Presets")
     let fileExtension: String  // "cube" or "png"
     
-    // Use composite ID to ensure uniqueness across subdirectories
-    var id: String { "\(subdirectory ?? "root")/\(name).\(fileExtension)" }
+    // Use composite ID to ensure uniqueness (subdirectory is always set in our usage)
+    var id: String { "\(subdirectory ?? "")/\(name).\(fileExtension)" }
 }
 
 // MARK: - Cube LUT Parser (Testable)
@@ -532,10 +532,11 @@ class CameraManager: NSObject, ObservableObject {
         }
         
         return extensions.flatMap { ext in
-            files.filter { $0.hasSuffix("." + ext) }.map {
-                LUTInfo(name: $0.replacingOccurrences(of: "." + ext, with: ""),
-                       subdirectory: subdirectory,
-                       fileExtension: ext)
+            files.filter { $0.hasSuffix("." + ext) }.map { filename in
+                let name = String(filename.dropLast(ext.count + 1))  // Remove .ext safely
+                return LUTInfo(name: name,
+                              subdirectory: subdirectory,
+                              fileExtension: ext)
             }
         }
     }
