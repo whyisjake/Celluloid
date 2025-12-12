@@ -368,9 +368,9 @@ struct LUTSection: View {
                 set: { cameraManager.selectedLUT = $0 == "None" ? nil : $0 }
             )) {
                 Text("None").tag("None")
-                ForEach(cameraManager.availableLUTs, id: \.self) { lut in
-                    Text(formatLUTName(lut))
-                        .tag(lut)
+                ForEach(cameraManager.availableLUTs) { lut in
+                    Text(formatLUTName(lut.name))
+                        .tag(lut.name)
                 }
             }
             .pickerStyle(.menu)

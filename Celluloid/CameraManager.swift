@@ -27,6 +27,17 @@ struct HALDConstants {
     static let gridSize = 8          // 8x8 grid of 64x64 blocks
 }
 
+// MARK: - LUT Info
+struct LUTInfo: Hashable, Identifiable {
+    let name: String
+    let subdirectory: String?  // nil for root LUT_pack, otherwise subdirectory path
+    let fileExtension: String  // "cube" or "png"
+    
+    var id: String { name }
+    
+    var displayName: String { name }
+}
+
 // MARK: - Cube LUT Parser (Testable)
 struct CubeLUTParser {
     enum ParseError: Error, Equatable {
@@ -189,7 +200,7 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     // LUT support
-    @MainActor @Published var availableLUTs: [String] = []
+    @MainActor @Published var availableLUTs: [LUTInfo] = []
     @MainActor @Published var selectedLUT: String? = nil {
         didSet {
             if let lutName = selectedLUT {
@@ -202,6 +213,12 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
     @MainActor private var currentLUTData: Data?
+    
+    // Helper to find LUT info by name
+    @MainActor
+    private func lutInfo(for name: String) -> LUTInfo? {
+        availableLUTs.first { $0.name == name }
+    }
     @MainActor private var currentLUTDimension: Int = 64
 
     // UserDefaults keys
@@ -506,55 +523,79 @@ class CameraManager: NSObject, ObservableObject {
 
     @MainActor
     private func loadAvailableLUTs() {
-        var luts: [String] = []
+        var luts: [LUTInfo] = []
 
         // Check root LUT_pack for .cube and .png files
         if let rootPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack" }),
            let files = try? FileManager.default.contentsOfDirectory(atPath: rootPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".cube") }.map { $0.replacingOccurrences(of: ".cube", with: "") })
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
+            luts.append(contentsOf: files.filter { $0.hasSuffix(".cube") }.map { 
+                LUTInfo(name: $0.replacingOccurrences(of: ".cube", with: ""), 
+                       subdirectory: "LUT_pack", 
+                       fileExtension: "cube") 
+            })
+            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
+                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
+                       subdirectory: "LUT_pack", 
+                       fileExtension: "png") 
+            })
         }
 
         // Check Film Presets
         if let filmPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Film Presets" }),
            let files = try? FileManager.default.contentsOfDirectory(atPath: filmPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
+            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
+                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
+                       subdirectory: "LUT_pack/Film Presets", 
+                       fileExtension: "png") 
+            })
         }
 
         // Check Webcam Presets
         if let webcamPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Webcam Presets" }),
            let files = try? FileManager.default.contentsOfDirectory(atPath: webcamPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
+            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
+                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
+                       subdirectory: "LUT_pack/Webcam Presets", 
+                       fileExtension: "png") 
+            })
         }
 
         // Check Contrast Filters
         if let contrastPath = Bundle.main.resourcePath.map({ $0 + "/LUT_pack/Contrast Filters" }),
            let files = try? FileManager.default.contentsOfDirectory(atPath: contrastPath) {
-            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { $0.replacingOccurrences(of: ".png", with: "") })
+            luts.append(contentsOf: files.filter { $0.hasSuffix(".png") }.map { 
+                LUTInfo(name: $0.replacingOccurrences(of: ".png", with: ""), 
+                       subdirectory: "LUT_pack/Contrast Filters", 
+                       fileExtension: "png") 
+            })
         }
 
-        availableLUTs = luts.sorted()
+        availableLUTs = luts.sorted { $0.name < $1.name }
     }
 
     @MainActor
     private func loadLUT(named name: String) {
-        // Try .cube file first (in root LUT_pack folder)
-        if let cubeURL = Bundle.main.url(forResource: name, withExtension: "cube", subdirectory: "LUT_pack") {
-            loadCubeLUT(from: cubeURL, name: name)
-            return
-        }
-
-        // Try PNG HALD CLUT in various subfolders
-        guard let lutURL = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack/Film Presets")
-                ?? Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack/Webcam Presets")
-                ?? Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack/Contrast Filters")
-                ?? Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "LUT_pack") else {
-            logger.error("LUT not found: \(name)")
+        // Find the LUT info with stored path
+        guard let info = lutInfo(for: name) else {
+            logger.error("LUT not found in availableLUTs: \(name)")
             currentLUTData = nil
             return
         }
-
-        loadPNGHaldLUT(from: lutURL, name: name)
+        
+        // Use stored subdirectory to avoid redundant lookups
+        guard let lutURL = Bundle.main.url(forResource: info.name, 
+                                           withExtension: info.fileExtension, 
+                                           subdirectory: info.subdirectory) else {
+            logger.error("LUT file not found: \(name) in \(info.subdirectory ?? "root")")
+            currentLUTData = nil
+            return
+        }
+        
+        if info.fileExtension == "cube" {
+            loadCubeLUT(from: lutURL, name: name)
+        } else {
+            loadPNGHaldLUT(from: lutURL, name: name)
+        }
     }
 
     @MainActor
