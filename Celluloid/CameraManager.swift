@@ -559,20 +559,29 @@ class CameraManager: NSObject, ObservableObject {
 
     @MainActor
     private func loadCubeLUT(from url: URL, name: String) {
-        guard let content = try? String(contentsOf: url, encoding: .utf8) else {
-            logger.error("Failed to read .cube file: \(name)")
-            currentLUTData = nil
-            return
-        }
+        // Move file reading and parsing to a background queue to avoid UI freezes
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let content = try? String(contentsOf: url, encoding: .utf8) else {
+                DispatchQueue.main.async {
+                    logger.error("Failed to read .cube file: \(name)")
+                    self?.currentLUTData = nil
+                }
+                return
+            }
 
-        switch CubeLUTParser.parse(content) {
-        case .success(let result):
-            currentLUTDimension = result.dimension
-            currentLUTData = result.data
-            logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
-        case .failure(let error):
-            logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
-            currentLUTData = nil
+            switch CubeLUTParser.parse(content) {
+            case .success(let result):
+                DispatchQueue.main.async {
+                    self?.currentLUTDimension = result.dimension
+                    self?.currentLUTData = result.data
+                    logger.info("Loaded .cube LUT: \(name) (\(result.dimension)x\(result.dimension)x\(result.dimension))")
+                }
+            case .failure(let error):
+                DispatchQueue.main.async {
+                    logger.error("Invalid .cube file '\(name)': \(String(describing: error))")
+                    self?.currentLUTData = nil
+                }
+            }
         }
     }
 
