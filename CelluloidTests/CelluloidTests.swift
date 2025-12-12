@@ -382,11 +382,14 @@ struct CelluloidTests {
         case .success(let parseResult):
             // Verify first RGB value is preserved
             parseResult.data.withUnsafeBytes { buffer in
-                let floats = buffer.bindMemory(to: Float.self)
-                #expect(abs(floats[0] - 0.1) < 0.001) // R
-                #expect(abs(floats[1] - 0.2) < 0.001) // G
-                #expect(abs(floats[2] - 0.3) < 0.001) // B
-                #expect(floats[3] == 1.0) // Alpha should be 1.0
+                let r = buffer.load(fromByteOffset: 0, as: Float.self)
+                let g = buffer.load(fromByteOffset: MemoryLayout<Float>.stride, as: Float.self)
+                let b = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 2, as: Float.self)
+                let a = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 3, as: Float.self)
+                #expect(abs(r - 0.1) < 0.001) // R
+                #expect(abs(g - 0.2) < 0.001) // G
+                #expect(abs(b - 0.3) < 0.001) // B
+                #expect(a == 1.0) // Alpha should be 1.0
             }
         case .failure:
             Issue.record("Expected success")
@@ -446,12 +449,15 @@ struct CelluloidTests {
         switch result {
         case .success(let parseResult):
             parseResult.data.withUnsafeBytes { buffer in
-                let floats = buffer.bindMemory(to: Float.self)
+                let r = buffer.load(fromByteOffset: 0, as: Float.self)
+                let g = buffer.load(fromByteOffset: MemoryLayout<Float>.stride, as: Float.self)
+                let b = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 2, as: Float.self)
+                let a = buffer.load(fromByteOffset: MemoryLayout<Float>.stride * 3, as: Float.self)
                 // First cube entry (r=0, g=0, b=0) maps to pixel (0,0)
-                #expect(abs(floats[0] - 1.0) < 0.01)    // R: 255/255 = 1.0
-                #expect(abs(floats[1] - 0.502) < 0.01) // G: 128/255 ≈ 0.502
-                #expect(abs(floats[2] - 0.251) < 0.01) // B: 64/255 ≈ 0.251
-                #expect(floats[3] == 1.0)              // Alpha always 1.0
+                #expect(abs(r - 1.0) < 0.01)    // R: 255/255 = 1.0
+                #expect(abs(g - 0.502) < 0.01) // G: 128/255 ≈ 0.502
+                #expect(abs(b - 0.251) < 0.01) // B: 64/255 ≈ 0.251
+                #expect(a == 1.0)              // Alpha always 1.0
             }
         case .failure:
             Issue.record("Expected success")
