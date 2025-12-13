@@ -58,7 +58,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
-		F5FB21502EEB600000DC1D6E /* PBXFileSystemSynchronizedBuildFileExceptionSet */ = {
+		F5FB21502EEB600000DC1D6E /* Exceptions for "CelluloidCameraExtension" folder in "CelluloidCameraExtension" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Info.plist,
@@ -86,7 +86,7 @@
 		F5FB21262EEB4D9000DC1D6E /* CelluloidCameraExtension */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
 			exceptions = (
-				F5FB21502EEB600000DC1D6E /* PBXFileSystemSynchronizedBuildFileExceptionSet */,
+				F5FB21502EEB600000DC1D6E /* Exceptions for "CelluloidCameraExtension" folder in "CelluloidCameraExtension" target */,
 			);
 			path = CelluloidCameraExtension;
 			sourceTree = "<group>";
@@ -149,29 +149,6 @@
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
-
-/* Begin PBXShellScriptBuildPhase section */
-		F5FB21402EEB500000DC1D6E /* Install to Applications */ = {
-			isa = PBXShellScriptBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app",
-			);
-			name = "Install to Applications";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-				"/Applications/$(PRODUCT_NAME).app",
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
-			shellScript = "# Install to /Applications after build (Release only)\n# NOTE: This script requires ENABLE_USER_SCRIPT_SANDBOXING=NO because it writes to /Applications\n# This is intentional for development convenience. For distribution, use Xcode's archive/export.\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    rm -rf /Applications/Celluloid.app\n    cp -R \"$BUILT_PRODUCTS_DIR/Celluloid.app\" /Applications/\n    echo \"Installed Celluloid.app to /Applications\"\nfi\n";
-		};
-/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXNativeTarget section */
 		F5FB20AB2EEB46D800DC1D6E /* Celluloid */ = {
@@ -346,6 +323,29 @@
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		F5FB21402EEB500000DC1D6E /* Install to Applications */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(BUILT_PRODUCTS_DIR)/$(PRODUCT_NAME).app",
+			);
+			name = "Install to Applications";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"/Applications/$(PRODUCT_NAME).app",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Install to /Applications after build (Release only)\n# NOTE: This script requires ENABLE_USER_SCRIPT_SANDBOXING=NO because it writes to /Applications\n# This is intentional for development convenience. For distribution, use Xcode's archive/export.\nif [ \"$CONFIGURATION\" = \"Release\" ]; then\n    rm -rf /Applications/Celluloid.app\n    cp -R \"$BUILT_PRODUCTS_DIR/Celluloid.app\" /Applications/\n    echo \"Installed Celluloid.app to /Applications\"\nfi\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
 		F5FB20A82EEB46D800DC1D6E /* Sources */ = {

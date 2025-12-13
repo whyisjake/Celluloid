@@ -16,9 +16,11 @@ struct CelluloidTests {
 
     @Test func filterTypeHasCorrectCases() {
         let allFilters = CameraManager.FilterType.allCases
-        #expect(allFilters.count == 10)
+        #expect(allFilters.count == 12)
         #expect(allFilters.contains(.none))
         #expect(allFilters.contains(.blackMist))
+        #expect(allFilters.contains(.gateWeave))
+        #expect(allFilters.contains(.halation))
         #expect(allFilters.contains(.noir))
     }
 
@@ -29,6 +31,11 @@ struct CelluloidTests {
     @Test func filterTypeBlackMistHasNoCIFilter() {
         // Black Mist is handled specially, not via ciFilterName
         #expect(CameraManager.FilterType.blackMist.ciFilterName == nil)
+    }
+
+    @Test func filterTypeHalationHasNoCIFilter() {
+        // Halation is handled specially, not via ciFilterName
+        #expect(CameraManager.FilterType.halation.ciFilterName == nil)
     }
 
     @Test func filterTypeNoirHasCorrectCIFilter() {

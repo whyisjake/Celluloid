@@ -11,6 +11,7 @@ import SwiftUI
 import Combine
 import os.log
 import CoreMediaIO
+import Metal
 
 private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "CameraManager")
 
@@ -239,7 +240,13 @@ class CameraManager: NSObject, ObservableObject {
     private let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
     private let sessionQueue = DispatchQueue(label: "com.celluloid.sessionQueue")
-    private let context = CIContext()
+
+    // Metal-backed CIContext for GPU-accelerated rendering
+    private let metalDevice: MTLDevice?
+    private let context: CIContext
+
+    // CVPixelBufferPool for efficient buffer reuse
+    private var pixelBufferPool: CVPixelBufferPool?
 
     // CoreMediaIO sink stream for sending frames to the camera extension
     private var sinkStreamID: CMIOStreamID = 0
@@ -253,6 +260,8 @@ class CameraManager: NSObject, ObservableObject {
     enum FilterType: String, CaseIterable, Identifiable, Sendable {
         case none = "None"
         case blackMist = "Black Mist"
+        case gateWeave = "Gate Weave"
+        case halation = "Halation"
         case noir = "Noir"
         case chrome = "Chrome"
         case fade = "Fade"
@@ -266,7 +275,7 @@ class CameraManager: NSObject, ObservableObject {
 
         var ciFilterName: String? {
             switch self {
-            case .none, .blackMist: return nil  // blackMist is handled specially
+            case .none, .blackMist, .gateWeave, .halation: return nil  // These are handled specially
             case .noir: return "CIPhotoEffectNoir"
             case .chrome: return "CIPhotoEffectChrome"
             case .fade: return "CIPhotoEffectFade"
@@ -284,7 +293,25 @@ class CameraManager: NSObject, ObservableObject {
     private static let streamStoppedNotification = "com.celluloid.streamStopped" as CFString
 
     override init() {
+        // Initialize Metal device and CIContext before super.init()
+        if let device = MTLCreateSystemDefaultDevice() {
+            self.metalDevice = device
+            self.context = CIContext(mtlDevice: device, options: [
+                .cacheIntermediates: false,  // Reduce memory usage
+                .priorityRequestLow: false   // Use high priority for real-time
+            ])
+            logger.info("Initialized Metal-backed CIContext with device: \(device.name)")
+        } else {
+            self.metalDevice = nil
+            self.context = CIContext()
+            logger.warning("Metal not available, falling back to CPU-based CIContext")
+        }
+
         super.init()
+
+        // Create pixel buffer pool for efficient buffer reuse
+        createPixelBufferPool()
+
         Task { @MainActor in
             loadAvailableLUTs()
             loadSettings()
@@ -292,6 +319,33 @@ class CameraManager: NSObject, ObservableObject {
             loadAvailableCameras()
             setupDarwinNotifications()
             // Camera starts OFF - will turn on when external app starts streaming
+        }
+    }
+
+    private func createPixelBufferPool() {
+        let poolAttributes: [CFString: Any] = [
+            kCVPixelBufferPoolMinimumBufferCountKey: 3  // Keep 3 buffers in pool
+        ]
+
+        let pixelBufferAttributes: [CFString: Any] = [
+            kCVPixelBufferWidthKey: CelluloidShared.width,
+            kCVPixelBufferHeightKey: CelluloidShared.height,
+            kCVPixelBufferPixelFormatTypeKey: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,  // IOSurface-backed for zero-copy
+            kCVPixelBufferMetalCompatibilityKey: true  // Metal compatible
+        ]
+
+        let status = CVPixelBufferPoolCreate(
+            kCFAllocatorDefault,
+            poolAttributes as CFDictionary,
+            pixelBufferAttributes as CFDictionary,
+            &pixelBufferPool
+        )
+
+        if status == kCVReturnSuccess {
+            logger.info("Created CVPixelBufferPool with IOSurface-backed, Metal-compatible buffers")
+        } else {
+            logger.error("Failed to create CVPixelBufferPool: \(status)")
         }
     }
 
@@ -689,8 +743,9 @@ class CameraManager: NSObject, ObservableObject {
 
     @MainActor
     private func updateCameraState() {
-        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming
-        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
+        // Keep running if: preview is open, external app is streaming, OR we're connected to a sink stream
+        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming || isConnectedToSinkStream
+        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isConnectedToSinkStream=\(self.isConnectedToSinkStream), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
 
         if shouldBeRunning && !isRunning && permissionGranted {
             logger.info("Starting camera session...")
@@ -751,63 +806,30 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
 
-        // Apply Black Mist filter (special handling)
-        // Emulates a Tiffen Black Pro-Mist: soft highlight bloom, reduced micro-contrast, rich blacks
+        // Apply Black Mist filter using custom filter class
         if selectedFilter == .blackMist {
-            let base = outputImage
-            let blurRadius: Double = 12.0
-            let strength: Double = 0.5
+            let blackMist = BlackMistFilter()
+            blackMist.inputImage = outputImage
+            if let result = blackMist.outputImage {
+                outputImage = result
+            }
+        }
 
-            // 1. Create a blurred copy
-            if let blurFilter = CIFilter(name: "CIGaussianBlur") {
-                blurFilter.setValue(base, forKey: kCIInputImageKey)
-                blurFilter.setValue(blurRadius, forKey: kCIInputRadiusKey)
-                if var blurred = blurFilter.outputImage {
-                    blurred = blurred.cropped(to: base.extent)
+        // Apply Gate Weave filter (film projector instability)
+        if selectedFilter == .gateWeave {
+            let gateWeave = GateWeaveFilter()
+            gateWeave.inputImage = outputImage
+            if let result = gateWeave.outputImage {
+                outputImage = result
+            }
+        }
 
-                    // 2. Slightly lift the blurred layer (bloom the highlights)
-                    if let exposureFilter = CIFilter(name: "CIExposureAdjust") {
-                        exposureFilter.setValue(blurred, forKey: kCIInputImageKey)
-                        exposureFilter.setValue(0.30, forKey: kCIInputEVKey)
-                        if let brightBlur = exposureFilter.outputImage {
-
-                            // 3. Blend with soft light for that dreamy halation
-                            if let blendFilter = CIFilter(name: "CISoftLightBlendMode") {
-                                blendFilter.setValue(brightBlur, forKey: kCIInputImageKey)
-                                blendFilter.setValue(base, forKey: kCIInputBackgroundImageKey)
-                                if let misty = blendFilter.outputImage {
-
-                                    // 4. Mix base + mist using alpha mask for strength control
-                                    let maskColor = CIColor(red: 1, green: 1, blue: 1, alpha: strength)
-                                    if let maskGen = CIFilter(name: "CIConstantColorGenerator") {
-                                        maskGen.setValue(maskColor, forKey: kCIInputColorKey)
-                                        if let mask = maskGen.outputImage?.cropped(to: base.extent) {
-
-                                            if let mixFilter = CIFilter(name: "CIBlendWithAlphaMask") {
-                                                mixFilter.setValue(misty, forKey: kCIInputImageKey)
-                                                mixFilter.setValue(base, forKey: kCIInputBackgroundImageKey)
-                                                mixFilter.setValue(mask, forKey: kCIInputMaskImageKey)
-                                                if let mixed = mixFilter.outputImage {
-
-                                                    // 5. Final subtle contrast/brightness tweak
-                                                    if let controls = CIFilter(name: "CIColorControls") {
-                                                        controls.setValue(mixed, forKey: kCIInputImageKey)
-                                                        controls.setValue(0.95, forKey: kCIInputContrastKey)
-                                                        controls.setValue(0.02, forKey: kCIInputBrightnessKey)
-                                                        controls.setValue(1.02, forKey: kCIInputSaturationKey)
-                                                        if let final = controls.outputImage?.cropped(to: base.extent) {
-                                                            outputImage = final
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+        // Apply Halation filter (red/orange glow around highlights)
+        if selectedFilter == .halation {
+            let halation = HalationFilter()
+            halation.inputImage = outputImage
+            if let result = halation.outputImage {
+                outputImage = result
             }
         }
 
@@ -1004,16 +1026,18 @@ class CameraManager: NSObject, ObservableObject {
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
         )
 
-        var name: CFString?
         var dataSize = UInt32(MemoryLayout<CFString?>.size)
+        var name: Unmanaged<CFString>?
 
-        let status = CMIOObjectGetPropertyData(streamID, &nameAddress, 0, nil, dataSize, &dataSize, &name)
+        let status = withUnsafeMutablePointer(to: &name) { namePtr in
+            CMIOObjectGetPropertyData(streamID, &nameAddress, 0, nil, dataSize, &dataSize, namePtr)
+        }
 
-        guard status == noErr, let streamName = name else {
+        guard status == noErr, let unmanagedName = name else {
             return nil
         }
 
-        return streamName as String
+        return unmanagedName.takeUnretainedValue() as String
     }
 
     private func connectToStream(_ streamID: CMIOStreamID) {
@@ -1106,52 +1130,84 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
-    private func createSampleBuffer(from cgImage: CGImage) -> CMSampleBuffer? {
-        let width = CelluloidShared.width
-        let height = CelluloidShared.height
+}
+
+extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
+    nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
+        guard let inputPixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
+        let ciImage = CIImage(cvPixelBuffer: inputPixelBuffer)
+
+        Task { @MainActor [weak self] in
+            guard let self = self else { return }
+            let processedImage = self.applyFilters(to: ciImage)
+
+            // Get a pixel buffer from the pool and render directly to it (GPU → GPU, no CPU roundtrip)
+            if let outputBuffer = self.getPooledPixelBuffer() {
+                // Scale the processed image to fit our output buffer size
+                let outputWidth = CGFloat(CelluloidShared.width)
+                let outputHeight = CGFloat(CelluloidShared.height)
+                let scaleX = outputWidth / processedImage.extent.width
+                let scaleY = outputHeight / processedImage.extent.height
+                let scaledImage = processedImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+
+                // Render CIImage directly to CVPixelBuffer using Metal
+                self.context.render(
+                    scaledImage,
+                    to: outputBuffer,
+                    bounds: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight),
+                    colorSpace: CGColorSpaceCreateDeviceRGB()
+                )
+
+                // Create CGImage from pixel buffer for preview (still needed for SwiftUI Image)
+                if let cgImage = self.createCGImage(from: outputBuffer) {
+                    self.currentFrame = cgImage
+                }
+
+                // Send to sink stream using the same buffer (zero-copy)
+                // Use nonisolated(unsafe) to suppress Sendable warning.
+                // This is safe here because the buffer is only read after rendering is complete on the MainActor.
+                nonisolated(unsafe) let sendBuffer = outputBuffer
+                self.sinkConnectionQueue.async { [weak self] in
+                    guard let self = self else { return }
+                    if let sampleBuffer = self.createSampleBuffer(from: sendBuffer) {
+                        self.sendFrameToSinkStream(sampleBuffer)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get a pixel buffer from the pool for rendering
+    private func getPooledPixelBuffer() -> CVPixelBuffer? {
+        guard let pool = pixelBufferPool else {
+            logger.warning("Pixel buffer pool not available")
+            return nil
+        }
 
         var pixelBuffer: CVPixelBuffer?
-        let attrs: [CFString: Any] = [
-            kCVPixelBufferCGImageCompatibilityKey: true,
-            kCVPixelBufferCGBitmapContextCompatibilityKey: true,
-            kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary
-        ]
+        let status = CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &pixelBuffer)
 
-        let status = CVPixelBufferCreate(
-            kCFAllocatorDefault,
-            width,
-            height,
-            kCVPixelFormatType_32BGRA,
-            attrs as CFDictionary,
-            &pixelBuffer
-        )
-
-        guard status == kCVReturnSuccess, let buffer = pixelBuffer else {
+        if status != kCVReturnSuccess {
+            logger.warning("Failed to get pixel buffer from pool: \(status)")
             return nil
         }
 
-        CVPixelBufferLockBaseAddress(buffer, [])
-        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+        return pixelBuffer
+    }
 
-        guard let context = CGContext(
-            data: CVPixelBufferGetBaseAddress(buffer),
-            width: width,
-            height: height,
-            bitsPerComponent: 8,
-            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-        ) else {
-            return nil
-        }
+    /// Create CGImage from CVPixelBuffer efficiently
+    private func createCGImage(from pixelBuffer: CVPixelBuffer) -> CGImage? {
+        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
+        return context.createCGImage(ciImage, from: ciImage.extent)
+    }
 
-        context.interpolationQuality = .high
-        context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
-
+    /// Create sample buffer from CVPixelBuffer directly (no CGImage intermediate)
+    private func createSampleBuffer(from pixelBuffer: CVPixelBuffer) -> CMSampleBuffer? {
         var formatDescription: CMFormatDescription?
         CMVideoFormatDescriptionCreateForImageBuffer(
             allocator: kCFAllocatorDefault,
-            imageBuffer: buffer,
+            imageBuffer: pixelBuffer,
             formatDescriptionOut: &formatDescription
         )
 
@@ -1167,36 +1223,12 @@ class CameraManager: NSObject, ObservableObject {
         var sampleBuffer: CMSampleBuffer?
         CMSampleBufferCreateReadyWithImageBuffer(
             allocator: kCFAllocatorDefault,
-            imageBuffer: buffer,
+            imageBuffer: pixelBuffer,
             formatDescription: format,
             sampleTiming: &timingInfo,
             sampleBufferOut: &sampleBuffer
         )
 
         return sampleBuffer
-    }
-}
-
-extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
-    nonisolated func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
-        guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-
-        let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-
-        Task { @MainActor [weak self] in
-            guard let self = self else { return }
-            let processedImage = self.applyFilters(to: ciImage)
-
-            if let cgImage = self.context.createCGImage(processedImage, from: processedImage.extent) {
-                self.currentFrame = cgImage
-
-                self.sinkConnectionQueue.async { [weak self] in
-                    guard let self = self else { return }
-                    if let sampleBuffer = self.createSampleBuffer(from: cgImage) {
-                        self.sendFrameToSinkStream(sampleBuffer)
-                    }
-                }
-            }
-        }
     }
 }
