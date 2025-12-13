@@ -145,6 +145,30 @@ class BlackMistFilter: CIFilter {
                 kCIAttributeMin: 0.0,
                 kCIAttributeMax: 100.0,
                 kCIAttributeType: kCIAttributeTypeScalar
+            ],
+            "inputExposureBoost": [
+                kCIAttributeDefault: 0.30,
+                kCIAttributeMin: -2.0,
+                kCIAttributeMax: 2.0,
+                kCIAttributeType: kCIAttributeTypeScalar
+            ],
+            "inputContrast": [
+                kCIAttributeDefault: 0.95,
+                kCIAttributeMin: 0.5,
+                kCIAttributeMax: 1.5,
+                kCIAttributeType: kCIAttributeTypeScalar
+            ],
+            "inputBrightness": [
+                kCIAttributeDefault: 0.02,
+                kCIAttributeMin: -0.5,
+                kCIAttributeMax: 0.5,
+                kCIAttributeType: kCIAttributeTypeScalar
+            ],
+            "inputSaturation": [
+                kCIAttributeDefault: 1.02,
+                kCIAttributeMin: 0.0,
+                kCIAttributeMax: 2.0,
+                kCIAttributeType: kCIAttributeTypeScalar
             ]
         ]
     }
