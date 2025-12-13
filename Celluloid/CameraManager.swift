@@ -261,6 +261,7 @@ class CameraManager: NSObject, ObservableObject {
         case none = "None"
         case blackMist = "Black Mist"
         case gateWeave = "Gate Weave"
+        case halation = "Halation"
         case noir = "Noir"
         case chrome = "Chrome"
         case fade = "Fade"
@@ -274,7 +275,7 @@ class CameraManager: NSObject, ObservableObject {
 
         var ciFilterName: String? {
             switch self {
-            case .none, .blackMist, .gateWeave: return nil  // These are handled specially
+            case .none, .blackMist, .gateWeave, .halation: return nil  // These are handled specially
             case .noir: return "CIPhotoEffectNoir"
             case .chrome: return "CIPhotoEffectChrome"
             case .fade: return "CIPhotoEffectFade"
@@ -819,6 +820,15 @@ class CameraManager: NSObject, ObservableObject {
             let gateWeave = GateWeaveFilter()
             gateWeave.inputImage = outputImage
             if let result = gateWeave.outputImage {
+                outputImage = result
+            }
+        }
+
+        // Apply Halation filter (red/orange glow around highlights)
+        if selectedFilter == .halation {
+            let halation = HalationFilter()
+            halation.inputImage = outputImage
+            if let result = halation.outputImage {
                 outputImage = result
             }
         }
