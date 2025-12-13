@@ -640,9 +640,12 @@ struct CelluloidTests {
 
         // Create test image
         let color = CIColor(red: 1.0, green: 1.0, blue: 1.0)
-        guard let colorGen = CIFilter(name: "CIConstantColorGenerator"),
-              let testImage = (colorGen.setValue(color, forKey: kCIInputColorKey),
-                              colorGen.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 50, height: 50))).1 else {
+        guard let colorGen = CIFilter(name: "CIConstantColorGenerator") else {
+            Issue.record("Failed to create test image")
+            return
+        }
+        colorGen.setValue(color, forKey: kCIInputColorKey)
+        guard let testImage = colorGen.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 50, height: 50)) else {
             Issue.record("Failed to create test image")
             return
         }
