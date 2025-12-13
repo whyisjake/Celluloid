@@ -479,4 +479,183 @@ struct CelluloidTests {
             Issue.record("Expected success")
         }
     }
+
+    // MARK: - BlackMistFilter Tests
+
+    @Test func blackMistFilterReturnsNilForNilInput() {
+        let filter = BlackMistFilter()
+        filter.inputImage = nil
+        #expect(filter.outputImage == nil)
+    }
+
+    @Test func blackMistFilterReturnsOutputForValidInput() {
+        let filter = BlackMistFilter()
+        // Create a simple 100x100 red test image
+        let color = CIColor(red: 1.0, green: 0.0, blue: 0.0)
+        guard let colorGen = CIFilter(name: "CIConstantColorGenerator") else {
+            Issue.record("Failed to create color generator")
+            return
+        }
+        colorGen.setValue(color, forKey: kCIInputColorKey)
+        guard let testImage = colorGen.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 100, height: 100)) else {
+            Issue.record("Failed to create test image")
+            return
+        }
+
+        filter.inputImage = testImage
+        let output = filter.outputImage
+
+        #expect(output != nil, "Filter should produce output for valid input")
+        #expect(output?.extent == testImage.extent, "Output extent should match input extent")
+    }
+
+    @Test func blackMistFilterHasCorrectDefaultValues() {
+        let filter = BlackMistFilter()
+
+        #expect(filter.inputStrength == 0.5)
+        #expect(filter.inputBlurRadius == 12.0)
+        #expect(filter.inputExposureBoost == 0.30)
+        #expect(filter.inputContrast == 0.95)
+        #expect(filter.inputBrightness == 0.02)
+        #expect(filter.inputSaturation == 1.02)
+    }
+
+    @Test func blackMistFilterAcceptsCustomParameters() {
+        let filter = BlackMistFilter()
+
+        // Set custom values
+        filter.inputStrength = 0.8
+        filter.inputBlurRadius = 20.0
+        filter.inputExposureBoost = 0.5
+        filter.inputContrast = 1.1
+        filter.inputBrightness = 0.1
+        filter.inputSaturation = 1.5
+
+        // Verify they were set
+        #expect(filter.inputStrength == 0.8)
+        #expect(filter.inputBlurRadius == 20.0)
+        #expect(filter.inputExposureBoost == 0.5)
+        #expect(filter.inputContrast == 1.1)
+        #expect(filter.inputBrightness == 0.1)
+        #expect(filter.inputSaturation == 1.5)
+    }
+
+    @Test func blackMistFilterProducesOutputWithCustomParameters() {
+        let filter = BlackMistFilter()
+
+        // Create test image
+        let color = CIColor(red: 0.5, green: 0.5, blue: 0.5)
+        guard let colorGen = CIFilter(name: "CIConstantColorGenerator"),
+              let testImage = (colorGen.setValue(color, forKey: kCIInputColorKey),
+                              colorGen.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 50, height: 50))).1 else {
+            Issue.record("Failed to create test image")
+            return
+        }
+
+        // Apply with custom parameters
+        filter.inputImage = testImage
+        filter.inputStrength = 1.0
+        filter.inputBlurRadius = 5.0
+
+        let output = filter.outputImage
+        #expect(output != nil, "Filter should produce output with custom parameters")
+    }
+
+    @Test func blackMistFilterAttributesContainsRequiredKeys() {
+        let filter = BlackMistFilter()
+        let attrs = filter.attributes
+
+        // Check display name
+        #expect(attrs[kCIAttributeFilterDisplayName] as? String == "Black Mist")
+
+        // Check categories
+        if let categories = attrs[kCIAttributeFilterCategories] as? [String] {
+            #expect(categories.contains(kCICategoryStylize))
+            #expect(categories.contains(kCICategoryVideo))
+            #expect(categories.contains(kCICategoryStillImage))
+        } else {
+            Issue.record("Filter should have categories")
+        }
+
+        // Check parameter attributes exist
+        #expect(attrs["inputStrength"] != nil)
+        #expect(attrs["inputBlurRadius"] != nil)
+        #expect(attrs["inputExposureBoost"] != nil)
+        #expect(attrs["inputContrast"] != nil)
+        #expect(attrs["inputBrightness"] != nil)
+        #expect(attrs["inputSaturation"] != nil)
+    }
+
+    @Test func blackMistFilterAttributesHaveCorrectRanges() {
+        let filter = BlackMistFilter()
+        let attrs = filter.attributes
+
+        // Check inputStrength range
+        if let strengthAttrs = attrs["inputStrength"] as? [String: Any] {
+            #expect(strengthAttrs[kCIAttributeDefault] as? Double == 0.5)
+            #expect(strengthAttrs[kCIAttributeMin] as? Double == 0.0)
+            #expect(strengthAttrs[kCIAttributeMax] as? Double == 1.0)
+        } else {
+            Issue.record("inputStrength should have attributes")
+        }
+
+        // Check inputBlurRadius range
+        if let blurAttrs = attrs["inputBlurRadius"] as? [String: Any] {
+            #expect(blurAttrs[kCIAttributeDefault] as? Double == 12.0)
+            #expect(blurAttrs[kCIAttributeMin] as? Double == 0.0)
+            #expect(blurAttrs[kCIAttributeMax] as? Double == 100.0)
+        } else {
+            Issue.record("inputBlurRadius should have attributes")
+        }
+    }
+
+    @Test func blackMistFilterPreservesImageExtent() {
+        let filter = BlackMistFilter()
+
+        // Create test images of different sizes
+        let sizes: [CGSize] = [
+            CGSize(width: 100, height: 100),
+            CGSize(width: 200, height: 150),
+            CGSize(width: 1280, height: 720)
+        ]
+
+        for size in sizes {
+            let color = CIColor(red: 0.3, green: 0.6, blue: 0.9)
+            guard let colorGen = CIFilter(name: "CIConstantColorGenerator") else { continue }
+            colorGen.setValue(color, forKey: kCIInputColorKey)
+            guard let testImage = colorGen.outputImage?.cropped(to: CGRect(origin: .zero, size: size)) else { continue }
+
+            filter.inputImage = testImage
+            let output = filter.outputImage
+
+            #expect(output?.extent.size == size, "Output size should match input size \(size)")
+        }
+    }
+
+    @Test func blackMistFilterHandlesEdgeCaseParameters() {
+        let filter = BlackMistFilter()
+
+        // Create test image
+        let color = CIColor(red: 1.0, green: 1.0, blue: 1.0)
+        guard let colorGen = CIFilter(name: "CIConstantColorGenerator"),
+              let testImage = (colorGen.setValue(color, forKey: kCIInputColorKey),
+                              colorGen.outputImage?.cropped(to: CGRect(x: 0, y: 0, width: 50, height: 50))).1 else {
+            Issue.record("Failed to create test image")
+            return
+        }
+
+        filter.inputImage = testImage
+
+        // Test with minimum strength (should be nearly passthrough)
+        filter.inputStrength = 0.0
+        #expect(filter.outputImage != nil, "Should handle zero strength")
+
+        // Test with maximum strength
+        filter.inputStrength = 1.0
+        #expect(filter.outputImage != nil, "Should handle max strength")
+
+        // Test with zero blur radius
+        filter.inputBlurRadius = 0.0
+        #expect(filter.outputImage != nil, "Should handle zero blur radius")
+    }
 }
