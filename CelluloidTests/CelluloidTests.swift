@@ -16,9 +16,10 @@ struct CelluloidTests {
 
     @Test func filterTypeHasCorrectCases() {
         let allFilters = CameraManager.FilterType.allCases
-        #expect(allFilters.count == 10)
+        #expect(allFilters.count == 11)
         #expect(allFilters.contains(.none))
         #expect(allFilters.contains(.blackMist))
+        #expect(allFilters.contains(.gateWeave))
         #expect(allFilters.contains(.noir))
     }
 

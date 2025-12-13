@@ -260,6 +260,7 @@ class CameraManager: NSObject, ObservableObject {
     enum FilterType: String, CaseIterable, Identifiable, Sendable {
         case none = "None"
         case blackMist = "Black Mist"
+        case gateWeave = "Gate Weave"
         case noir = "Noir"
         case chrome = "Chrome"
         case fade = "Fade"
@@ -273,7 +274,7 @@ class CameraManager: NSObject, ObservableObject {
 
         var ciFilterName: String? {
             switch self {
-            case .none, .blackMist: return nil  // blackMist is handled specially
+            case .none, .blackMist, .gateWeave: return nil  // These are handled specially
             case .noir: return "CIPhotoEffectNoir"
             case .chrome: return "CIPhotoEffectChrome"
             case .fade: return "CIPhotoEffectFade"
@@ -741,8 +742,9 @@ class CameraManager: NSObject, ObservableObject {
 
     @MainActor
     private func updateCameraState() {
-        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming
-        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
+        // Keep running if: preview is open, external app is streaming, OR we're connected to a sink stream
+        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming || isConnectedToSinkStream
+        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isConnectedToSinkStream=\(self.isConnectedToSinkStream), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
 
         if shouldBeRunning && !isRunning && permissionGranted {
             logger.info("Starting camera session...")
@@ -808,6 +810,15 @@ class CameraManager: NSObject, ObservableObject {
             let blackMist = BlackMistFilter()
             blackMist.inputImage = outputImage
             if let result = blackMist.outputImage {
+                outputImage = result
+            }
+        }
+
+        // Apply Gate Weave filter (film projector instability)
+        if selectedFilter == .gateWeave {
+            let gateWeave = GateWeaveFilter()
+            gateWeave.inputImage = outputImage
+            if let result = gateWeave.outputImage {
                 outputImage = result
             }
         }
