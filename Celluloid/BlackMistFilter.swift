@@ -8,8 +8,6 @@
 import CoreImage
 import os.log
 
-private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "BlackMistFilter")
-
 /// A custom CIFilter that emulates a Tiffen Black Pro-Mist filter effect
 /// using a Metal kernel for GPU-accelerated processing.
 ///
@@ -19,6 +17,10 @@ private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "
 /// When the Metal kernel is available, this filter combines 5 operations into a single GPU pass.
 /// Falls back to CIFilter chain if the kernel cannot be loaded.
 class BlackMistFilter: CIFilter {
+    
+    // MARK: - Logger
+    
+    private static let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "BlackMistFilter")
 
     // MARK: - Input Parameters
 
