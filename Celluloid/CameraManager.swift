@@ -803,63 +803,12 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
 
-        // Apply Black Mist filter (special handling)
-        // Emulates a Tiffen Black Pro-Mist: soft highlight bloom, reduced micro-contrast, rich blacks
+        // Apply Black Mist filter using custom filter class
         if selectedFilter == .blackMist {
-            let base = outputImage
-            let blurRadius: Double = 12.0
-            let strength: Double = 0.5
-
-            // 1. Create a blurred copy
-            if let blurFilter = CIFilter(name: "CIGaussianBlur") {
-                blurFilter.setValue(base, forKey: kCIInputImageKey)
-                blurFilter.setValue(blurRadius, forKey: kCIInputRadiusKey)
-                if var blurred = blurFilter.outputImage {
-                    blurred = blurred.cropped(to: base.extent)
-
-                    // 2. Slightly lift the blurred layer (bloom the highlights)
-                    if let exposureFilter = CIFilter(name: "CIExposureAdjust") {
-                        exposureFilter.setValue(blurred, forKey: kCIInputImageKey)
-                        exposureFilter.setValue(0.30, forKey: kCIInputEVKey)
-                        if let brightBlur = exposureFilter.outputImage {
-
-                            // 3. Blend with soft light for that dreamy halation
-                            if let blendFilter = CIFilter(name: "CISoftLightBlendMode") {
-                                blendFilter.setValue(brightBlur, forKey: kCIInputImageKey)
-                                blendFilter.setValue(base, forKey: kCIInputBackgroundImageKey)
-                                if let misty = blendFilter.outputImage {
-
-                                    // 4. Mix base + mist using alpha mask for strength control
-                                    let maskColor = CIColor(red: 1, green: 1, blue: 1, alpha: strength)
-                                    if let maskGen = CIFilter(name: "CIConstantColorGenerator") {
-                                        maskGen.setValue(maskColor, forKey: kCIInputColorKey)
-                                        if let mask = maskGen.outputImage?.cropped(to: base.extent) {
-
-                                            if let mixFilter = CIFilter(name: "CIBlendWithAlphaMask") {
-                                                mixFilter.setValue(misty, forKey: kCIInputImageKey)
-                                                mixFilter.setValue(base, forKey: kCIInputBackgroundImageKey)
-                                                mixFilter.setValue(mask, forKey: kCIInputMaskImageKey)
-                                                if let mixed = mixFilter.outputImage {
-
-                                                    // 5. Final subtle contrast/brightness tweak
-                                                    if let controls = CIFilter(name: "CIColorControls") {
-                                                        controls.setValue(mixed, forKey: kCIInputImageKey)
-                                                        controls.setValue(0.95, forKey: kCIInputContrastKey)
-                                                        controls.setValue(0.02, forKey: kCIInputBrightnessKey)
-                                                        controls.setValue(1.02, forKey: kCIInputSaturationKey)
-                                                        if let final = controls.outputImage?.cropped(to: base.extent) {
-                                                            outputImage = final
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+            let blackMist = BlackMistFilter()
+            blackMist.inputImage = outputImage
+            if let result = blackMist.outputImage {
+                outputImage = result
             }
         }
 
@@ -988,24 +937,18 @@ class CameraManager: NSObject, ObservableObject {
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
         )
 
-        var name: CFString?
         var dataSize = UInt32(MemoryLayout<CFString?>.size)
+        var name: Unmanaged<CFString>?
 
-        let status = CMIOObjectGetPropertyData(
-            deviceID,
-            &nameAddress,
-            0,
-            nil,
-            dataSize,
-            &dataSize,
-            &name
-        )
+        let status = withUnsafeMutablePointer(to: &name) { namePtr in
+            CMIOObjectGetPropertyData(deviceID, &nameAddress, 0, nil, dataSize, &dataSize, namePtr)
+        }
 
-        guard status == noErr, let deviceName = name else {
+        guard status == noErr, let unmanagedName = name else {
             return nil
         }
 
-        return deviceName as String
+        return unmanagedName.takeUnretainedValue() as String
     }
 
     private func findSinkStream(for deviceID: CMIODeviceID) {
@@ -1056,16 +999,18 @@ class CameraManager: NSObject, ObservableObject {
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
         )
 
-        var name: CFString?
         var dataSize = UInt32(MemoryLayout<CFString?>.size)
+        var name: Unmanaged<CFString>?
 
-        let status = CMIOObjectGetPropertyData(streamID, &nameAddress, 0, nil, dataSize, &dataSize, &name)
+        let status = withUnsafeMutablePointer(to: &name) { namePtr in
+            CMIOObjectGetPropertyData(streamID, &nameAddress, 0, nil, dataSize, &dataSize, namePtr)
+        }
 
-        guard status == noErr, let streamName = name else {
+        guard status == noErr, let unmanagedName = name else {
             return nil
         }
 
-        return streamName as String
+        return unmanagedName.takeUnretainedValue() as String
     }
 
     private func connectToStream(_ streamID: CMIOStreamID) {
@@ -1193,6 +1138,7 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
 
                 // Send to sink stream using the same buffer (zero-copy)
+                // CVPixelBuffer is thread-safe, so we can safely capture it in the async closure
                 self.sinkConnectionQueue.async { [weak self] in
                     guard let self = self else { return }
                     if let sampleBuffer = self.createSampleBuffer(from: outputBuffer) {
