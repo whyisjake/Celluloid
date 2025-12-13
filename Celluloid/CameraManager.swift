@@ -1138,11 +1138,10 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
                 }
 
                 // Send to sink stream using the same buffer (zero-copy)
-                // Use nonisolated(unsafe) to suppress Sendable warning - CVPixelBuffer is thread-safe for reading
-                nonisolated(unsafe) let sendBuffer = outputBuffer
+                // CVPixelBuffer is thread-safe, so we can safely capture it in the async closure
                 self.sinkConnectionQueue.async { [weak self] in
                     guard let self = self else { return }
-                    if let sampleBuffer = self.createSampleBuffer(from: sendBuffer) {
+                    if let sampleBuffer = self.createSampleBuffer(from: outputBuffer) {
                         self.sendFrameToSinkStream(sampleBuffer)
                     }
                 }
