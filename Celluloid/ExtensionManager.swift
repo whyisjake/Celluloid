@@ -8,6 +8,7 @@
 import Foundation
 import SystemExtensions
 import AVFoundation
+import AppKit
 import Combine
 import os.log
 
@@ -18,6 +19,7 @@ class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDele
     @Published var extensionStatus: String = "Not Installed"
     @Published var isInstalled = false
     @Published var needsApproval = false
+    @Published var needsCameraExtensionEnabled = false
 
     private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "ExtensionManager")
     private let extensionIdentifier = "jakespurlock.Celluloid.CelluloidCameraExtension"
@@ -63,11 +65,67 @@ class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDele
             if found {
                 self.extensionStatus = "Active"
                 self.isInstalled = true
+                self.needsCameraExtensionEnabled = false
             } else {
-                self.extensionStatus = "Not Installed"
-                self.isInstalled = false
-                print("Celluloid camera not found among \(cameras.count) cameras")
+                // Check if extension is installed but not enabled
+                self.checkExtensionEnabledStatus()
             }
+        }
+    }
+
+    /// Check if extension is installed but waiting for user to enable in System Settings
+    private func checkExtensionEnabledStatus() {
+        // Run systemextensionsctl to check status
+        let task = Process()
+        task.executableURL = URL(fileURLWithPath: "/usr/bin/systemextensionsctl")
+        task.arguments = ["list"]
+
+        let pipe = Pipe()
+        task.standardOutput = pipe
+        task.standardError = pipe
+
+        do {
+            try task.run()
+            task.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            if let output = String(data: data, encoding: .utf8) {
+                if output.contains(extensionIdentifier) {
+                    // Extension is installed
+                    if output.contains("waiting for user") {
+                        // Installed but not enabled in Camera Extensions settings
+                        self.extensionStatus = "Enable in System Settings"
+                        self.needsCameraExtensionEnabled = true
+                        self.isInstalled = false
+                        logger.info("Extension installed but needs to be enabled in System Settings")
+                    } else if output.contains("activated enabled") {
+                        // Enabled but camera not showing - may need app restart
+                        self.extensionStatus = "Restart video apps to use"
+                        self.isInstalled = true
+                        self.needsCameraExtensionEnabled = false
+                    } else {
+                        self.extensionStatus = "Not Installed"
+                        self.isInstalled = false
+                        self.needsCameraExtensionEnabled = false
+                    }
+                } else {
+                    self.extensionStatus = "Not Installed"
+                    self.isInstalled = false
+                    self.needsCameraExtensionEnabled = false
+                }
+            }
+        } catch {
+            logger.error("Failed to check extension status: \(error.localizedDescription)")
+            self.extensionStatus = "Not Installed"
+            self.isInstalled = false
+        }
+    }
+
+    /// Open System Settings to Camera Extensions pane
+    func openCameraExtensionSettings() {
+        // macOS 13+ URL for Login Items & Extensions
+        if let url = URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension") {
+            NSWorkspace.shared.open(url)
         }
     }
 

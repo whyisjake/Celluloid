@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @EnvironmentObject var cameraManager: CameraManager
+    @ObservedObject var extensionManager = ExtensionManager.shared
 
     var body: some View {
         VStack(spacing: 0) {
@@ -75,7 +76,18 @@ struct ContentView: View {
                         // LUT Section
                         LUTSection(cameraManager: cameraManager)
                             .padding(.horizontal)
-                            .padding(.bottom)
+
+                        // Virtual Camera Section (show if needs attention)
+                        if extensionManager.needsCameraExtensionEnabled || !extensionManager.isInstalled {
+                            Divider()
+                                .padding(.vertical, 8)
+
+                            VirtualCameraSection(extensionManager: extensionManager)
+                                .padding(.horizontal)
+                        }
+
+                        Spacer()
+                            .frame(height: 16)
                     }
                 }
 
@@ -280,7 +292,7 @@ struct VirtualCameraSection: View {
                         .font(.caption)
                     Text(extensionManager.extensionStatus)
                         .font(.caption2)
-                        .foregroundColor(extensionManager.isInstalled ? .green : .secondary)
+                        .foregroundColor(statusColor)
                 }
 
                 Spacer()
@@ -295,9 +307,14 @@ struct VirtualCameraSection: View {
                         .buttonStyle(.bordered)
                         .controlSize(.small)
                     }
+                } else if extensionManager.needsCameraExtensionEnabled {
+                    Button("Enable in Settings") {
+                        extensionManager.openCameraExtensionSettings()
+                    }
+                    .buttonStyle(.borderedProminent)
                 } else if extensionManager.needsApproval {
                     Button("Open Settings") {
-                        NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.LoginItems-Settings.extension")!)
+                        extensionManager.openCameraExtensionSettings()
                     }
                     .buttonStyle(.borderedProminent)
                 } else {
@@ -320,21 +337,44 @@ struct VirtualCameraSection: View {
             .background(Color.secondary.opacity(0.1))
             .cornerRadius(8)
 
-            if !extensionManager.isInstalled {
-                if extensionManager.needsApproval {
-                    Text("Click Open Settings, then enable Celluloid under Camera Extensions.")
-                        .font(.caption2)
-                        .foregroundColor(.orange)
-                } else {
-                    Text("Click Install to enable virtual camera. App must be in /Applications folder.")
-                        .font(.caption2)
-                        .foregroundColor(.secondary)
-                }
-            } else {
-                Text("Select 'Celluloid Camera' in Zoom or other video apps.")
+            // Help text based on state
+            helpText
+        }
+    }
+
+    private var statusColor: Color {
+        if extensionManager.isInstalled {
+            return .green
+        } else if extensionManager.needsCameraExtensionEnabled {
+            return .orange
+        } else {
+            return .secondary
+        }
+    }
+
+    @ViewBuilder
+    private var helpText: some View {
+        if extensionManager.needsCameraExtensionEnabled {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Extension installed but needs to be enabled:")
+                    .font(.caption2)
+                    .foregroundColor(.orange)
+                Text("System Settings → General → Login Items & Extensions → Camera Extensions → Enable Celluloid")
                     .font(.caption2)
                     .foregroundColor(.secondary)
             }
+        } else if extensionManager.needsApproval {
+            Text("Click Open Settings, then enable Celluloid under Camera Extensions.")
+                .font(.caption2)
+                .foregroundColor(.orange)
+        } else if !extensionManager.isInstalled {
+            Text("Click Install to enable virtual camera. App must be in /Applications folder.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
+        } else {
+            Text("Select 'Celluloid Camera' in Zoom, FaceTime, or other video apps.")
+                .font(.caption2)
+                .foregroundColor(.secondary)
         }
     }
 }
