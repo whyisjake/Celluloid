@@ -168,6 +168,9 @@ struct CropOverlayView: View {
     @ObservedObject var cameraManager: CameraManager
     @State private var isDragging = false
     
+    // Drag sensitivity - lower values = more precise control
+    private let dragSensitivity: CGFloat = 0.01
+    
     var body: some View {
         GeometryReader { geometry in
             ZStack {
@@ -227,7 +230,11 @@ struct CropOverlayView: View {
                     .onChanged { value in
                         if cameraManager.zoomLevel > 1.0 {
                             isDragging = true
-                            // Convert drag to normalized offset (-1 to 1)
+                            // Calculate the maximum allowed offset based on zoom level
+                            // This matches the clamping formula in CameraManager
+                            let maxNormalizedOffset = (cameraManager.zoomLevel - 1.0) / cameraManager.zoomLevel
+                            
+                            // Convert drag to normalized offset change
                             let cropWidth = geometry.size.width / cameraManager.zoomLevel
                             let cropHeight = geometry.size.height / cameraManager.zoomLevel
                             let maxOffsetX = (geometry.size.width - cropWidth) / 2
@@ -235,11 +242,13 @@ struct CropOverlayView: View {
                             
                             if maxOffsetX > 0 {
                                 let deltaX = value.translation.width / maxOffsetX
-                                cameraManager.cropOffsetX = max(-1, min(1, cameraManager.cropOffsetX + deltaX * 0.01))
+                                let newOffsetX = cameraManager.cropOffsetX + deltaX * dragSensitivity
+                                cameraManager.cropOffsetX = max(-maxNormalizedOffset, min(maxNormalizedOffset, newOffsetX))
                             }
                             if maxOffsetY > 0 {
                                 let deltaY = value.translation.height / maxOffsetY
-                                cameraManager.cropOffsetY = max(-1, min(1, cameraManager.cropOffsetY + deltaY * 0.01))
+                                let newOffsetY = cameraManager.cropOffsetY + deltaY * dragSensitivity
+                                cameraManager.cropOffsetY = max(-maxNormalizedOffset, min(maxNormalizedOffset, newOffsetY))
                             }
                         }
                     }

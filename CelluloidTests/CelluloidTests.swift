@@ -540,7 +540,8 @@ struct CelluloidTests {
         // Reduce zoom - offsets should be clamped
         manager.zoomLevel = 2.0
         
-        let maxOffset = (2.0 - 1.0) / 2.0  // 0.5
+        // maxOffset calculation should match CameraManager's formula
+        let maxOffset = (2.0 - 1.0) / 2.0  // (zoomLevel - 1.0) / zoomLevel = 0.5
         #expect(manager.cropOffsetX <= maxOffset)
         #expect(manager.cropOffsetY <= maxOffset)
     }
