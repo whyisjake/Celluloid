@@ -167,6 +167,8 @@ struct CameraPreviewView: View {
 struct CropOverlayView: View {
     @ObservedObject var cameraManager: CameraManager
     @State private var isDragging = false
+    @State private var dragStartOffsetX: Double = 0.0
+    @State private var dragStartOffsetY: Double = 0.0
     
     // Drag sensitivity - lower values = more precise control
     private let dragSensitivity: CGFloat = 0.01
@@ -229,25 +231,33 @@ struct CropOverlayView: View {
                 DragGesture()
                     .onChanged { value in
                         if cameraManager.zoomLevel > 1.0 {
-                            isDragging = true
+                            if !isDragging {
+                                // Store the starting position when drag begins
+                                isDragging = true
+                                dragStartOffsetX = cameraManager.cropOffsetX
+                                dragStartOffsetY = cameraManager.cropOffsetY
+                            }
+                            
                             // Calculate the maximum allowed offset based on zoom level
                             // This matches the clamping formula in CameraManager
                             let maxNormalizedOffset = (cameraManager.zoomLevel - 1.0) / cameraManager.zoomLevel
                             
-                            // Convert drag to normalized offset change
+                            // Convert drag translation to normalized offset change
                             let cropWidth = geometry.size.width / cameraManager.zoomLevel
                             let cropHeight = geometry.size.height / cameraManager.zoomLevel
                             let maxOffsetX = (geometry.size.width - cropWidth) / 2
                             let maxOffsetY = (geometry.size.height - cropHeight) / 2
                             
                             if maxOffsetX > 0 {
-                                let deltaX = value.translation.width / maxOffsetX
-                                let newOffsetX = cameraManager.cropOffsetX + deltaX * dragSensitivity
+                                // Calculate offset change from drag start position
+                                let deltaX = (value.translation.width / maxOffsetX) * dragSensitivity
+                                let newOffsetX = dragStartOffsetX + deltaX
                                 cameraManager.cropOffsetX = max(-maxNormalizedOffset, min(maxNormalizedOffset, newOffsetX))
                             }
                             if maxOffsetY > 0 {
-                                let deltaY = value.translation.height / maxOffsetY
-                                let newOffsetY = cameraManager.cropOffsetY + deltaY * dragSensitivity
+                                // Calculate offset change from drag start position
+                                let deltaY = (value.translation.height / maxOffsetY) * dragSensitivity
+                                let newOffsetY = dragStartOffsetY + deltaY
                                 cameraManager.cropOffsetY = max(-maxNormalizedOffset, min(maxNormalizedOffset, newOffsetY))
                             }
                         }

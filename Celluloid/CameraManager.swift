@@ -821,11 +821,12 @@ class CameraManager: NSObject, ObservableObject {
             outputImage = outputImage.cropped(to: cropRect)
             
             // Scale back to original size (this creates the zoom effect)
-            // Combine scale and translation into a single transform for better performance
+            // Combine translation and scale into a single transform for better performance
+            // Translation must be applied BEFORE scaling to position correctly
             let scaleX = imageWidth / croppedWidth
             let scaleY = imageHeight / croppedHeight
-            let combinedTransform = CGAffineTransform(scaleX: scaleX, y: scaleY)
-                .translatedBy(x: -cropX, y: -cropY)
+            let combinedTransform = CGAffineTransform(translationX: -cropX, y: -cropY)
+                .scaledBy(x: scaleX, y: scaleY)
             outputImage = outputImage.transformed(by: combinedTransform)
         }
 
