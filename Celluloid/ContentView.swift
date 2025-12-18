@@ -170,8 +170,8 @@ struct CropOverlayView: View {
     @State private var dragStartOffsetX: Double = 0.0
     @State private var dragStartOffsetY: Double = 0.0
     
-    // Drag sensitivity - lower values = more precise control
-    private let dragSensitivity: CGFloat = 0.01
+    // Drag sensitivity - controls responsiveness of drag gesture
+    private let dragSensitivity: CGFloat = 1.0
     
     var body: some View {
         GeometryReader { geometry in
