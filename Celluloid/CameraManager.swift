@@ -193,6 +193,23 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var sharpness: Double = 0.0 {    // 0.0 to 2.0
         didSet { saveSettings() }
     }
+    
+    // Zoom and crop controls (persisted)
+    @MainActor @Published var zoomLevel: Double = 1.0 {    // 1.0 to 4.0
+        didSet { 
+            // Clamp crop position when zoom changes to prevent out of bounds
+            let maxOffset = (zoomLevel - 1.0) / zoomLevel
+            cropOffsetX = max(-maxOffset, min(maxOffset, cropOffsetX))
+            cropOffsetY = max(-maxOffset, min(maxOffset, cropOffsetY))
+            saveSettings() 
+        }
+    }
+    @MainActor @Published var cropOffsetX: Double = 0.0 {  // -1.0 to 1.0 (normalized)
+        didSet { saveSettings() }
+    }
+    @MainActor @Published var cropOffsetY: Double = 0.0 {  // -1.0 to 1.0 (normalized)
+        didSet { saveSettings() }
+    }
 
     // Filter (persisted)
     @MainActor @Published var selectedFilter: FilterType = .none {
@@ -232,6 +249,9 @@ class CameraManager: NSObject, ObservableObject {
         static let filter = "celluloid.filter"
         static let selectedCameraID = "celluloid.selectedCameraID"
         static let selectedLUT = "celluloid.selectedLUT"
+        static let zoomLevel = "celluloid.zoomLevel"
+        static let cropOffsetX = "celluloid.cropOffsetX"
+        static let cropOffsetY = "celluloid.cropOffsetY"
     }
 
     // Flag to prevent saving while loading
@@ -376,6 +396,15 @@ class CameraManager: NSObject, ObservableObject {
         if defaults.object(forKey: SettingsKey.sharpness) != nil {
             sharpness = defaults.double(forKey: SettingsKey.sharpness)
         }
+        if defaults.object(forKey: SettingsKey.zoomLevel) != nil {
+            zoomLevel = defaults.double(forKey: SettingsKey.zoomLevel)
+        }
+        if defaults.object(forKey: SettingsKey.cropOffsetX) != nil {
+            cropOffsetX = defaults.double(forKey: SettingsKey.cropOffsetX)
+        }
+        if defaults.object(forKey: SettingsKey.cropOffsetY) != nil {
+            cropOffsetY = defaults.double(forKey: SettingsKey.cropOffsetY)
+        }
         if let filterName = defaults.string(forKey: SettingsKey.filter),
            let filter = FilterType(rawValue: filterName) {
             selectedFilter = filter
@@ -396,6 +425,9 @@ class CameraManager: NSObject, ObservableObject {
         defaults.set(exposure, forKey: SettingsKey.exposure)
         defaults.set(temperature, forKey: SettingsKey.temperature)
         defaults.set(sharpness, forKey: SettingsKey.sharpness)
+        defaults.set(zoomLevel, forKey: SettingsKey.zoomLevel)
+        defaults.set(cropOffsetX, forKey: SettingsKey.cropOffsetX)
+        defaults.set(cropOffsetY, forKey: SettingsKey.cropOffsetY)
         defaults.set(selectedFilter.rawValue, forKey: SettingsKey.filter)
         defaults.set(selectedLUT, forKey: SettingsKey.selectedLUT)
     }
@@ -569,6 +601,9 @@ class CameraManager: NSObject, ObservableObject {
         exposure = 0.0
         temperature = 6500
         sharpness = 0.0
+        zoomLevel = 1.0
+        cropOffsetX = 0.0
+        cropOffsetY = 0.0
         selectedFilter = .none
     }
 
@@ -759,6 +794,38 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor
     private func applyFilters(to image: CIImage) -> CIImage {
         var outputImage = image
+        
+        // Apply zoom and crop FIRST (before any other filters)
+        if zoomLevel > 1.0 {
+            // Calculate the crop rect based on zoom level and crop offsets
+            let imageWidth = outputImage.extent.width
+            let imageHeight = outputImage.extent.height
+            
+            // The visible area is 1/zoomLevel of the original
+            let croppedWidth = imageWidth / zoomLevel
+            let croppedHeight = imageHeight / zoomLevel
+            
+            // Calculate center position with offsets
+            // Offsets are normalized (-1 to 1), convert to pixel space
+            let maxOffsetX = (imageWidth - croppedWidth) / 2
+            let maxOffsetY = (imageHeight - croppedHeight) / 2
+            let centerX = imageWidth / 2 + cropOffsetX * maxOffsetX
+            let centerY = imageHeight / 2 + cropOffsetY * maxOffsetY
+            
+            // Calculate crop rectangle
+            let cropX = centerX - croppedWidth / 2
+            let cropY = centerY - croppedHeight / 2
+            let cropRect = CGRect(x: cropX, y: cropY, width: croppedWidth, height: croppedHeight)
+            
+            // Crop to the desired area
+            outputImage = outputImage.cropped(to: cropRect)
+            
+            // Scale back to original size (this creates the zoom effect)
+            let scaleX = imageWidth / croppedWidth
+            let scaleY = imageHeight / croppedHeight
+            outputImage = outputImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+                                     .transformed(by: CGAffineTransform(translationX: -cropX * scaleX, y: -cropY * scaleY))
+        }
 
         // Apply color controls (brightness, contrast, saturation)
         if let colorControls = CIFilter(name: "CIColorControls") {

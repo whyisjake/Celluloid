@@ -79,6 +79,9 @@ struct CelluloidTests {
         #expect(manager.exposure == 0.0)
         #expect(manager.temperature == 6500)
         #expect(manager.sharpness == 0.0)
+        #expect(manager.zoomLevel == 1.0)
+        #expect(manager.cropOffsetX == 0.0)
+        #expect(manager.cropOffsetY == 0.0)
         #expect(manager.selectedFilter == .none)
     }
 
@@ -485,5 +488,78 @@ struct CelluloidTests {
         case .failure:
             Issue.record("Expected success")
         }
+    }
+    
+    // MARK: - Zoom and Crop Tests
+    
+    @Test @MainActor func zoomLevelDefaultsToOne() async {
+        let manager = CameraManager()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(manager.zoomLevel == 1.0)
+    }
+    
+    @Test @MainActor func zoomLevelCanBeSet() async {
+        let manager = CameraManager()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        manager.zoomLevel = 2.0
+        #expect(manager.zoomLevel == 2.0)
+        
+        manager.zoomLevel = 4.0
+        #expect(manager.zoomLevel == 4.0)
+    }
+    
+    @Test @MainActor func cropOffsetsDefaultToZero() async {
+        let manager = CameraManager()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        #expect(manager.cropOffsetX == 0.0)
+        #expect(manager.cropOffsetY == 0.0)
+    }
+    
+    @Test @MainActor func cropOffsetsCanBeSet() async {
+        let manager = CameraManager()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        manager.zoomLevel = 2.0  // Enable zoom first
+        manager.cropOffsetX = 0.5
+        manager.cropOffsetY = -0.3
+        
+        #expect(manager.cropOffsetX == 0.5)
+        #expect(manager.cropOffsetY == -0.3)
+    }
+    
+    @Test @MainActor func cropOffsetsClampedWhenZoomChanges() async {
+        let manager = CameraManager()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        // Set high zoom with offsets
+        manager.zoomLevel = 4.0
+        manager.cropOffsetX = 0.5
+        manager.cropOffsetY = 0.5
+        
+        // Reduce zoom - offsets should be clamped
+        manager.zoomLevel = 2.0
+        
+        let maxOffset = (2.0 - 1.0) / 2.0  // 0.5
+        #expect(manager.cropOffsetX <= maxOffset)
+        #expect(manager.cropOffsetY <= maxOffset)
+    }
+    
+    @Test @MainActor func resetAdjustmentsResetsZoomAndCrop() async {
+        let manager = CameraManager()
+        try? await Task.sleep(nanoseconds: 100_000_000)
+        
+        // Set zoom and crop
+        manager.zoomLevel = 2.5
+        manager.cropOffsetX = 0.4
+        manager.cropOffsetY = -0.2
+        
+        // Reset
+        manager.resetAdjustments()
+        
+        // Verify reset
+        #expect(manager.zoomLevel == 1.0)
+        #expect(manager.cropOffsetX == 0.0)
+        #expect(manager.cropOffsetY == 0.0)
     }
 }

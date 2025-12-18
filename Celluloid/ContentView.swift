@@ -34,12 +34,17 @@ struct ContentView: View {
                 // Scrollable content
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Camera Preview (mirrored like a mirror)
-                        CameraPreviewView(image: cameraManager.currentFrame)
-                            .scaleEffect(x: -1, y: 1)
-                            .frame(width: 320, height: 180)
-                            .cornerRadius(8)
-                            .padding()
+                        // Camera Preview with Crop Overlay (mirrored like a mirror)
+                        ZStack {
+                            CameraPreviewView(image: cameraManager.currentFrame)
+                                .scaleEffect(x: -1, y: 1)
+                            
+                            CropOverlayView(cameraManager: cameraManager)
+                                .scaleEffect(x: -1, y: 1)
+                        }
+                        .frame(width: 320, height: 180)
+                        .cornerRadius(8)
+                        .padding()
 
                         // Camera selector
                         if cameraManager.availableCameras.count > 1 {
@@ -159,6 +164,93 @@ struct CameraPreviewView: View {
     }
 }
 
+struct CropOverlayView: View {
+    @ObservedObject var cameraManager: CameraManager
+    @State private var isDragging = false
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                // Semi-transparent overlay showing zoom is active
+                if cameraManager.zoomLevel > 1.0 {
+                    // Dimmed area outside crop
+                    Rectangle()
+                        .fill(Color.black.opacity(0.3))
+                    
+                    // Calculate crop rectangle position
+                    let cropWidth = geometry.size.width / cameraManager.zoomLevel
+                    let cropHeight = geometry.size.height / cameraManager.zoomLevel
+                    let maxOffsetX = (geometry.size.width - cropWidth) / 2
+                    let maxOffsetY = (geometry.size.height - cropHeight) / 2
+                    let centerX = geometry.size.width / 2 + cameraManager.cropOffsetX * maxOffsetX
+                    let centerY = geometry.size.height / 2 + cameraManager.cropOffsetY * maxOffsetY
+                    let cropX = centerX - cropWidth / 2
+                    let cropY = centerY - cropHeight / 2
+                    
+                    // Clear rectangle showing the crop area
+                    Rectangle()
+                        .fill(.clear)
+                        .frame(width: cropWidth, height: cropHeight)
+                        .position(x: centerX, y: centerY)
+                        .blendMode(.destinationOut)
+                    
+                    // Crop frame border
+                    Rectangle()
+                        .strokeBorder(Color.white, lineWidth: 2)
+                        .frame(width: cropWidth, height: cropHeight)
+                        .position(x: centerX, y: centerY)
+                    
+                    // Corner handles for visual feedback
+                    ForEach(0..<4) { corner in
+                        Rectangle()
+                            .fill(Color.white)
+                            .frame(width: 12, height: 12)
+                            .position(
+                                x: corner % 2 == 0 ? cropX : cropX + cropWidth,
+                                y: corner < 2 ? cropY : cropY + cropHeight
+                            )
+                    }
+                    
+                    // Center crosshair for better visual feedback
+                    Path { path in
+                        path.move(to: CGPoint(x: centerX - 10, y: centerY))
+                        path.addLine(to: CGPoint(x: centerX + 10, y: centerY))
+                        path.move(to: CGPoint(x: centerX, y: centerY - 10))
+                        path.addLine(to: CGPoint(x: centerX, y: centerY + 10))
+                    }
+                    .stroke(Color.white, lineWidth: 1)
+                }
+            }
+            .compositingGroup()
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if cameraManager.zoomLevel > 1.0 {
+                            isDragging = true
+                            // Convert drag to normalized offset (-1 to 1)
+                            let cropWidth = geometry.size.width / cameraManager.zoomLevel
+                            let cropHeight = geometry.size.height / cameraManager.zoomLevel
+                            let maxOffsetX = (geometry.size.width - cropWidth) / 2
+                            let maxOffsetY = (geometry.size.height - cropHeight) / 2
+                            
+                            if maxOffsetX > 0 {
+                                let deltaX = value.translation.width / maxOffsetX
+                                cameraManager.cropOffsetX = max(-1, min(1, cameraManager.cropOffsetX + deltaX * 0.01))
+                            }
+                            if maxOffsetY > 0 {
+                                let deltaY = value.translation.height / maxOffsetY
+                                cameraManager.cropOffsetY = max(-1, min(1, cameraManager.cropOffsetY + deltaY * 0.01))
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
+        }
+    }
+}
+
 struct AdjustmentsSection: View {
     @ObservedObject var cameraManager: CameraManager
 
@@ -208,6 +300,13 @@ struct AdjustmentsSection: View {
                 value: $cameraManager.sharpness,
                 range: 0.0...2.0,
                 icon: "triangle"
+            )
+            
+            AdjustmentSlider(
+                title: "Zoom",
+                value: $cameraManager.zoomLevel,
+                range: 1.0...4.0,
+                icon: "magnifyingglass"
             )
         }
     }
