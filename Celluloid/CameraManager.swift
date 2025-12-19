@@ -193,6 +193,22 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var sharpness: Double = 0.0 {    // 0.0 to 2.0
         didSet { saveSettings() }
     }
+    
+    // Zoom and crop controls (persisted)
+    @MainActor @Published var zoomLevel: Double = 1.0 {    // 1.0 to 4.0
+        didSet {
+            // Clamp crop position to valid range (-1 to 1)
+            cropOffsetX = max(-1.0, min(1.0, cropOffsetX))
+            cropOffsetY = max(-1.0, min(1.0, cropOffsetY))
+            saveSettings()
+        }
+    }
+    @MainActor @Published var cropOffsetX: Double = 0.0 {  // -1.0 to 1.0 (normalized)
+        didSet { saveSettingsDebounced() }
+    }
+    @MainActor @Published var cropOffsetY: Double = 0.0 {  // -1.0 to 1.0 (normalized)
+        didSet { saveSettingsDebounced() }
+    }
 
     // Filter (persisted)
     @MainActor @Published var selectedFilter: FilterType = .none {
@@ -232,10 +248,16 @@ class CameraManager: NSObject, ObservableObject {
         static let filter = "celluloid.filter"
         static let selectedCameraID = "celluloid.selectedCameraID"
         static let selectedLUT = "celluloid.selectedLUT"
+        static let zoomLevel = "celluloid.zoomLevel"
+        static let cropOffsetX = "celluloid.cropOffsetX"
+        static let cropOffsetY = "celluloid.cropOffsetY"
     }
 
     // Flag to prevent saving while loading
     private var isLoadingSettings = false
+
+    // Debounce timer for saving settings during drag operations
+    private var saveSettingsWorkItem: DispatchWorkItem?
 
     private let captureSession = AVCaptureSession()
     private let videoOutput = AVCaptureVideoDataOutput()
@@ -376,6 +398,15 @@ class CameraManager: NSObject, ObservableObject {
         if defaults.object(forKey: SettingsKey.sharpness) != nil {
             sharpness = defaults.double(forKey: SettingsKey.sharpness)
         }
+        if defaults.object(forKey: SettingsKey.zoomLevel) != nil {
+            zoomLevel = defaults.double(forKey: SettingsKey.zoomLevel)
+        }
+        if defaults.object(forKey: SettingsKey.cropOffsetX) != nil {
+            cropOffsetX = defaults.double(forKey: SettingsKey.cropOffsetX)
+        }
+        if defaults.object(forKey: SettingsKey.cropOffsetY) != nil {
+            cropOffsetY = defaults.double(forKey: SettingsKey.cropOffsetY)
+        }
         if let filterName = defaults.string(forKey: SettingsKey.filter),
            let filter = FilterType(rawValue: filterName) {
             selectedFilter = filter
@@ -396,8 +427,29 @@ class CameraManager: NSObject, ObservableObject {
         defaults.set(exposure, forKey: SettingsKey.exposure)
         defaults.set(temperature, forKey: SettingsKey.temperature)
         defaults.set(sharpness, forKey: SettingsKey.sharpness)
+        defaults.set(zoomLevel, forKey: SettingsKey.zoomLevel)
+        defaults.set(cropOffsetX, forKey: SettingsKey.cropOffsetX)
+        defaults.set(cropOffsetY, forKey: SettingsKey.cropOffsetY)
         defaults.set(selectedFilter.rawValue, forKey: SettingsKey.filter)
         defaults.set(selectedLUT, forKey: SettingsKey.selectedLUT)
+    }
+
+    /// Debounced version of saveSettings for high-frequency updates (like drag gestures)
+    @MainActor
+    private func saveSettingsDebounced() {
+        guard !isLoadingSettings else { return }
+
+        // Cancel any pending save
+        saveSettingsWorkItem?.cancel()
+
+        // Schedule a new save after 200ms of inactivity
+        let workItem = DispatchWorkItem { [weak self] in
+            Task { @MainActor in
+                self?.saveSettings()
+            }
+        }
+        saveSettingsWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2, execute: workItem)
     }
 
     @MainActor
@@ -569,6 +621,9 @@ class CameraManager: NSObject, ObservableObject {
         exposure = 0.0
         temperature = 6500
         sharpness = 0.0
+        zoomLevel = 1.0
+        cropOffsetX = 0.0
+        cropOffsetY = 0.0
         selectedFilter = .none
     }
 
@@ -743,9 +798,10 @@ class CameraManager: NSObject, ObservableObject {
 
     @MainActor
     private func updateCameraState() {
-        // Keep running if: preview is open, external app is streaming, OR we're connected to a sink stream
-        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming || isConnectedToSinkStream
-        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isConnectedToSinkStream=\(self.isConnectedToSinkStream), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
+        // Keep running if: preview is open OR external app is streaming
+        // Note: isConnectedToSinkStream is just a communication channel state, not a reason to keep camera on
+        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming
+        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
 
         if shouldBeRunning && !isRunning && permissionGranted {
             logger.info("Starting camera session...")
@@ -757,8 +813,45 @@ class CameraManager: NSObject, ObservableObject {
     }
 
     @MainActor
-    private func applyFilters(to image: CIImage) -> CIImage {
+    private func applyFilters(to image: CIImage, applyZoom: Bool = true) -> CIImage {
         var outputImage = image
+
+        // Apply zoom and crop FIRST (before any other filters)
+        // Only apply if applyZoom is true (for output, not preview)
+        if applyZoom && zoomLevel > 1.0 {
+            // Calculate the crop rect based on zoom level and crop offsets
+            let imageWidth = outputImage.extent.width
+            let imageHeight = outputImage.extent.height
+
+            // The visible area is 1/zoomLevel of the original
+            let croppedWidth = imageWidth / zoomLevel
+            let croppedHeight = imageHeight / zoomLevel
+
+            // Calculate center position with offsets
+            // Offsets are normalized (-1 to 1), convert to pixel space
+            let maxOffsetX = (imageWidth - croppedWidth) / 2
+            let maxOffsetY = (imageHeight - croppedHeight) / 2
+            let centerX = imageWidth / 2 + cropOffsetX * maxOffsetX
+            // Negate cropOffsetY because CIImage has Y=0 at bottom, but UI has Y=0 at top
+            let centerY = imageHeight / 2 - cropOffsetY * maxOffsetY
+
+            // Calculate crop rectangle
+            let cropX = centerX - croppedWidth / 2
+            let cropY = centerY - croppedHeight / 2
+            let cropRect = CGRect(x: cropX, y: cropY, width: croppedWidth, height: croppedHeight)
+
+            // Crop to the desired area
+            outputImage = outputImage.cropped(to: cropRect)
+
+            // After cropping, the image extent is still at (cropX, cropY)
+            // We need to translate it to origin (0,0) before scaling
+            outputImage = outputImage.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
+
+            // Scale back to original size (this creates the zoom effect)
+            let scaleX = imageWidth / croppedWidth
+            let scaleY = imageHeight / croppedHeight
+            outputImage = outputImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+        }
 
         // Apply color controls (brightness, contrast, saturation)
         if let colorControls = CIFilter(name: "CIColorControls") {
@@ -1140,33 +1233,47 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
 
         Task { @MainActor [weak self] in
             guard let self = self else { return }
-            let processedImage = self.applyFilters(to: ciImage)
 
-            // Get a pixel buffer from the pool and render directly to it (GPU → GPU, no CPU roundtrip)
-            if let outputBuffer = self.getPooledPixelBuffer() {
-                // Scale the processed image to fit our output buffer size
-                let outputWidth = CGFloat(CelluloidShared.width)
-                let outputHeight = CGFloat(CelluloidShared.height)
-                let scaleX = outputWidth / processedImage.extent.width
-                let scaleY = outputHeight / processedImage.extent.height
-                let scaledImage = processedImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
+            // Process for PREVIEW (no zoom - shows full frame with crop overlay)
+            let previewImage = self.applyFilters(to: ciImage, applyZoom: false)
 
-                // Render CIImage directly to CVPixelBuffer using Metal
+            // Process for OUTPUT (with zoom - what goes to virtual camera)
+            let outputImage = self.applyFilters(to: ciImage, applyZoom: true)
+
+            let outputWidth = CGFloat(CelluloidShared.width)
+            let outputHeight = CGFloat(CelluloidShared.height)
+
+            // Render preview image to CGImage for SwiftUI
+            let previewScaleX = outputWidth / previewImage.extent.width
+            let previewScaleY = outputHeight / previewImage.extent.height
+            let scaledPreview = previewImage.transformed(by: CGAffineTransform(scaleX: previewScaleX, y: previewScaleY))
+
+            if let previewBuffer = self.getPooledPixelBuffer() {
                 self.context.render(
-                    scaledImage,
+                    scaledPreview,
+                    to: previewBuffer,
+                    bounds: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight),
+                    colorSpace: CGColorSpaceCreateDeviceRGB()
+                )
+                if let cgImage = self.createCGImage(from: previewBuffer) {
+                    self.currentFrame = cgImage
+                }
+            }
+
+            // Render output image (with zoom) for virtual camera
+            if let outputBuffer = self.getPooledPixelBuffer() {
+                let outputScaleX = outputWidth / outputImage.extent.width
+                let outputScaleY = outputHeight / outputImage.extent.height
+                let scaledOutput = outputImage.transformed(by: CGAffineTransform(scaleX: outputScaleX, y: outputScaleY))
+
+                self.context.render(
+                    scaledOutput,
                     to: outputBuffer,
                     bounds: CGRect(x: 0, y: 0, width: outputWidth, height: outputHeight),
                     colorSpace: CGColorSpaceCreateDeviceRGB()
                 )
 
-                // Create CGImage from pixel buffer for preview (still needed for SwiftUI Image)
-                if let cgImage = self.createCGImage(from: outputBuffer) {
-                    self.currentFrame = cgImage
-                }
-
-                // Send to sink stream using the same buffer (zero-copy)
-                // Use nonisolated(unsafe) to suppress Sendable warning.
-                // This is safe here because the buffer is only read after rendering is complete on the MainActor.
+                // Send to sink stream
                 nonisolated(unsafe) let sendBuffer = outputBuffer
                 self.sinkConnectionQueue.async { [weak self] in
                     guard let self = self else { return }

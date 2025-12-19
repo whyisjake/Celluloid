@@ -10,7 +10,9 @@ A macOS virtual camera app that captures your webcam feed, applies real-time fil
 
 - **Real-time filters** - Noir, Chrome, Fade, Instant, Mono, Process, Tonal, Transfer, and Black Mist (Tiffen Pro-Mist emulation)
 - **Adjustments** - Brightness, contrast, saturation, exposure, color temperature, and sharpness
-- **Persistent settings** - Your adjustments and filter selection are saved between sessions
+- **Digital zoom** - Zoom from 1.0x to 4.0x with precise control over field of view
+- **Movable crop window** - Drag to pan the viewport within the zoomed view for perfect framing
+- **Persistent settings** - Your adjustments, filter selection, zoom, and crop position are saved between sessions
 - **Smart activation** - Camera only runs when the preview window is open or an external app is using the virtual camera
 - **Mirrored preview** - Preview shows a mirrored view like looking in a mirror
 - **Menubar app** - Lives in your menubar for quick access

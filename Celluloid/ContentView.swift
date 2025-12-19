@@ -35,12 +35,27 @@ struct ContentView: View {
                 // Scrollable content
                 ScrollView {
                     VStack(spacing: 0) {
-                        // Camera Preview (mirrored like a mirror)
-                        CameraPreviewView(image: cameraManager.currentFrame)
-                            .scaleEffect(x: -1, y: 1)
-                            .frame(width: 320, height: 180)
-                            .cornerRadius(8)
-                            .padding()
+                        // Camera Preview with Crop Overlay (mirrored like a mirror)
+                        ZStack {
+                            CameraPreviewView(image: cameraManager.currentFrame)
+                                .scaleEffect(x: -1, y: 1)
+                            
+                            CropOverlayView(cameraManager: cameraManager)
+                                .scaleEffect(x: -1, y: 1)
+                        }
+                        .frame(width: 320, height: 180)
+                        .cornerRadius(8)
+                        .padding()
+
+                        // Zoom slider (below video, above camera selector)
+                        AdjustmentSlider(
+                            title: "Zoom",
+                            value: $cameraManager.zoomLevel,
+                            range: 1.0...4.0,
+                            icon: "magnifyingglass"
+                        )
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
 
                         // Camera selector
                         if cameraManager.availableCameras.count > 1 {
@@ -167,6 +182,100 @@ struct CameraPreviewView: View {
                 ProgressView()
                     .progressViewStyle(.circular)
             }
+        }
+    }
+}
+
+struct CropOverlayView: View {
+    @ObservedObject var cameraManager: CameraManager
+    @State private var isDragging = false
+    @State private var dragStartOffsetX: Double = 0.0
+    @State private var dragStartOffsetY: Double = 0.0
+    
+    // Drag sensitivity - controls responsiveness of drag gesture
+    private let dragSensitivity: CGFloat = 1.0
+    
+    var body: some View {
+        GeometryReader { geometry in
+            ZStack {
+                // Semi-transparent overlay showing zoom is active
+                if cameraManager.zoomLevel > 1.0 {
+                    // Dimmed area outside crop
+                    Rectangle()
+                        .fill(Color.black.opacity(0.3))
+                    
+                    // Calculate crop rectangle position
+                    let cropWidth = geometry.size.width / cameraManager.zoomLevel
+                    let cropHeight = geometry.size.height / cameraManager.zoomLevel
+                    let maxOffsetX = (geometry.size.width - cropWidth) / 2
+                    let maxOffsetY = (geometry.size.height - cropHeight) / 2
+                    let centerX = geometry.size.width / 2 + cameraManager.cropOffsetX * maxOffsetX
+                    let centerY = geometry.size.height / 2 + cameraManager.cropOffsetY * maxOffsetY
+                    let cropX = centerX - cropWidth / 2
+                    let cropY = centerY - cropHeight / 2
+                    
+                    // Clear rectangle showing the crop area
+                    Rectangle()
+                        .fill(.clear)
+                        .frame(width: cropWidth, height: cropHeight)
+                        .position(x: centerX, y: centerY)
+                        .blendMode(.destinationOut)
+                    
+                    // Crop frame border
+                    Rectangle()
+                        .strokeBorder(Color.white, lineWidth: 2)
+                        .frame(width: cropWidth, height: cropHeight)
+                        .position(x: centerX, y: centerY)
+
+                    // Center crosshair for better visual feedback
+                    Path { path in
+                        path.move(to: CGPoint(x: centerX - 10, y: centerY))
+                        path.addLine(to: CGPoint(x: centerX + 10, y: centerY))
+                        path.move(to: CGPoint(x: centerX, y: centerY - 10))
+                        path.addLine(to: CGPoint(x: centerX, y: centerY + 10))
+                    }
+                    .stroke(Color.white, lineWidth: 1)
+                }
+            }
+            .compositingGroup()
+            .gesture(
+                DragGesture()
+                    .onChanged { value in
+                        if cameraManager.zoomLevel > 1.0 {
+                            if !isDragging {
+                                // Store the starting position when drag begins
+                                isDragging = true
+                                dragStartOffsetX = cameraManager.cropOffsetX
+                                dragStartOffsetY = cameraManager.cropOffsetY
+                            }
+
+                            // Offset range is -1 to 1, allowing crop to reach edges
+                            let maxNormalizedOffset = 1.0
+                            
+                            // Convert drag translation to normalized offset change
+                            let cropWidth = geometry.size.width / cameraManager.zoomLevel
+                            let cropHeight = geometry.size.height / cameraManager.zoomLevel
+                            let maxOffsetX = (geometry.size.width - cropWidth) / 2
+                            let maxOffsetY = (geometry.size.height - cropHeight) / 2
+                            
+                            if maxOffsetX > 0 {
+                                // Calculate offset change from drag start position
+                                let deltaX = (value.translation.width / maxOffsetX) * dragSensitivity
+                                let newOffsetX = dragStartOffsetX + deltaX
+                                cameraManager.cropOffsetX = max(-maxNormalizedOffset, min(maxNormalizedOffset, newOffsetX))
+                            }
+                            if maxOffsetY > 0 {
+                                // Calculate offset change from drag start position
+                                let deltaY = (value.translation.height / maxOffsetY) * dragSensitivity
+                                let newOffsetY = dragStartOffsetY + deltaY
+                                cameraManager.cropOffsetY = max(-maxNormalizedOffset, min(maxNormalizedOffset, newOffsetY))
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        isDragging = false
+                    }
+            )
         }
     }
 }
