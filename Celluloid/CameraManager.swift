@@ -798,9 +798,10 @@ class CameraManager: NSObject, ObservableObject {
 
     @MainActor
     private func updateCameraState() {
-        // Keep running if: preview is open, external app is streaming, OR we're connected to a sink stream
-        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming || isConnectedToSinkStream
-        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isConnectedToSinkStream=\(self.isConnectedToSinkStream), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
+        // Keep running if: preview is open OR external app is streaming
+        // Note: isConnectedToSinkStream is just a communication channel state, not a reason to keep camera on
+        let shouldBeRunning = previewWindowIsOpen || externalAppIsStreaming
+        logger.info("updateCameraState: shouldBeRunning=\(shouldBeRunning), previewWindowIsOpen=\(self.previewWindowIsOpen), externalAppIsStreaming=\(self.externalAppIsStreaming), isRunning=\(self.isRunning), permissionGranted=\(self.permissionGranted)")
 
         if shouldBeRunning && !isRunning && permissionGranted {
             logger.info("Starting camera session...")
