@@ -46,6 +46,16 @@ struct ContentView: View {
                         .cornerRadius(8)
                         .padding()
 
+                        // Zoom slider (below video, above camera selector)
+                        AdjustmentSlider(
+                            title: "Zoom",
+                            value: $cameraManager.zoomLevel,
+                            range: 1.0...4.0,
+                            icon: "magnifyingglass"
+                        )
+                        .padding(.horizontal)
+                        .padding(.bottom, 8)
+
                         // Camera selector
                         if cameraManager.availableCameras.count > 1 {
                             Picker("Camera", selection: Binding(
@@ -204,18 +214,7 @@ struct CropOverlayView: View {
                         .strokeBorder(Color.white, lineWidth: 2)
                         .frame(width: cropWidth, height: cropHeight)
                         .position(x: centerX, y: centerY)
-                    
-                    // Corner handles for visual feedback
-                    ForEach(0..<4) { corner in
-                        Rectangle()
-                            .fill(Color.white)
-                            .frame(width: 12, height: 12)
-                            .position(
-                                x: corner % 2 == 0 ? cropX : cropX + cropWidth,
-                                y: corner < 2 ? cropY : cropY + cropHeight
-                            )
-                    }
-                    
+
                     // Center crosshair for better visual feedback
                     Path { path in
                         path.move(to: CGPoint(x: centerX - 10, y: centerY))
@@ -237,10 +236,9 @@ struct CropOverlayView: View {
                                 dragStartOffsetX = cameraManager.cropOffsetX
                                 dragStartOffsetY = cameraManager.cropOffsetY
                             }
-                            
-                            // Calculate the maximum allowed offset based on zoom level
-                            // This matches the clamping formula in CameraManager
-                            let maxNormalizedOffset = (cameraManager.zoomLevel - 1.0) / cameraManager.zoomLevel
+
+                            // Offset range is -1 to 1, allowing crop to reach edges
+                            let maxNormalizedOffset = 1.0
                             
                             // Convert drag translation to normalized offset change
                             let cropWidth = geometry.size.width / cameraManager.zoomLevel
@@ -319,13 +317,6 @@ struct AdjustmentsSection: View {
                 value: $cameraManager.sharpness,
                 range: 0.0...2.0,
                 icon: "triangle"
-            )
-            
-            AdjustmentSlider(
-                title: "Zoom",
-                value: $cameraManager.zoomLevel,
-                range: 1.0...4.0,
-                icon: "magnifyingglass"
             )
         }
     }
