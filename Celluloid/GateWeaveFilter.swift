@@ -19,6 +19,9 @@ class GateWeaveFilter: CIFilter {
 
     @objc dynamic var inputImage: CIImage?
 
+    /// Overall strength of the effect (0.0 - 1.0). Default: 0.5
+    @objc dynamic var inputStrength: CGFloat = 0.5
+
     /// Intensity of the horizontal weave (pixels). Default: 4.0
     @objc dynamic var inputHorizontalAmount: CGFloat = 4.0
 
@@ -47,9 +50,11 @@ class GateWeaveFilter: CIFilter {
 
         // Generate smooth random motion using multiple sine waves
         // This creates organic, non-repeating motion
-        let xOffset = calculateWeave(time: elapsed, frequencies: [0.7, 1.3, 2.1], amplitude: Double(inputHorizontalAmount))
-        let yOffset = calculateWeave(time: elapsed, frequencies: [0.5, 1.1, 1.9], amplitude: Double(inputVerticalAmount))
-        let rotation = calculateWeave(time: elapsed, frequencies: [0.3, 0.8, 1.5], amplitude: Double(inputRotationAmount) * .pi / 180.0)
+        // Apply inputStrength to scale all motion
+        let strength = Double(inputStrength)
+        let xOffset = calculateWeave(time: elapsed, frequencies: [0.7, 1.3, 2.1], amplitude: Double(inputHorizontalAmount) * strength)
+        let yOffset = calculateWeave(time: elapsed, frequencies: [0.5, 1.1, 1.9], amplitude: Double(inputVerticalAmount) * strength)
+        let rotation = calculateWeave(time: elapsed, frequencies: [0.3, 0.8, 1.5], amplitude: Double(inputRotationAmount) * .pi / 180.0 * strength)
 
         // Create transform centered on the image
         let centerX = input.extent.midX
