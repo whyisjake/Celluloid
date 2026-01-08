@@ -23,6 +23,7 @@ class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDele
 
     private let logger = Logger(subsystem: "com.jakespurlock.Celluloid", category: "ExtensionManager")
     private let extensionIdentifier = "jakespurlock.Celluloid.CelluloidCameraExtension"
+    private var statusCheckTimer: Timer?
 
     override init() {
         super.init()
@@ -30,6 +31,23 @@ class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDele
         // Auto-activate extension on launch to ensure latest version is installed
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
             self?.activateExtension()
+        }
+        // Start periodic status checks to detect when user enables extension
+        startStatusPolling()
+    }
+
+    deinit {
+        statusCheckTimer?.invalidate()
+    }
+
+    /// Start polling for extension status changes (checks every 3 seconds when extension needs enabling)
+    private func startStatusPolling() {
+        statusCheckTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            // Only poll frequently if extension needs user action
+            if self.needsCameraExtensionEnabled || !self.isInstalled {
+                self.checkForVirtualCamera()
+            }
         }
     }
 
@@ -166,7 +184,7 @@ class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDele
             let nsError = error as NSError
             if nsError.domain == OSSystemExtensionErrorDomain {
                 switch nsError.code {
-                case 1: // Not in /Applications
+                case 1, 3: // unsupportedParentBundleLocation - Not in /Applications
                     self.extensionStatus = "Move app to /Applications"
                 case 4: // Missing entitlement
                     self.extensionStatus = "Signing error"

@@ -32,6 +32,11 @@ struct ContentView: View {
             Divider()
 
             if cameraManager.permissionGranted {
+                // Warning banner if extension needs enabling
+                if extensionManager.needsCameraExtensionEnabled {
+                    ExtensionWarningBanner(extensionManager: extensionManager)
+                }
+
                 // Scrollable content
                 ScrollView {
                     VStack(spacing: 0) {
@@ -92,14 +97,12 @@ struct ContentView: View {
                         LUTSection(cameraManager: cameraManager)
                             .padding(.horizontal)
 
-                        // Virtual Camera Section (show if needs attention)
-                        if extensionManager.needsCameraExtensionEnabled || !extensionManager.isInstalled {
-                            Divider()
-                                .padding(.vertical, 8)
+                        // Virtual Camera Section (always show for visibility)
+                        Divider()
+                            .padding(.vertical, 8)
 
-                            VirtualCameraSection(extensionManager: extensionManager)
-                                .padding(.horizontal)
-                        }
+                        VirtualCameraSection(extensionManager: extensionManager)
+                            .padding(.horizontal)
 
                         Spacer()
                             .frame(height: 16)
@@ -211,9 +214,7 @@ struct CropOverlayView: View {
                     let maxOffsetY = (geometry.size.height - cropHeight) / 2
                     let centerX = geometry.size.width / 2 + cameraManager.cropOffsetX * maxOffsetX
                     let centerY = geometry.size.height / 2 + cameraManager.cropOffsetY * maxOffsetY
-                    let cropX = centerX - cropWidth / 2
-                    let cropY = centerY - cropHeight / 2
-                    
+
                     // Clear rectangle showing the crop area
                     Rectangle()
                         .fill(.clear)
@@ -543,6 +544,31 @@ struct FilterButton: View {
                 .cornerRadius(6)
         }
         .buttonStyle(.plain)
+    }
+}
+
+struct ExtensionWarningBanner: View {
+    @ObservedObject var extensionManager: ExtensionManager
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundColor(.orange)
+
+            Text("Virtual camera needs to be enabled")
+                .font(.caption)
+                .fontWeight(.medium)
+
+            Spacer()
+
+            Button("Enable") {
+                extensionManager.openCameraExtensionSettings()
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.15))
     }
 }
 

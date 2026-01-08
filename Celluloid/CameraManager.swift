@@ -1051,24 +1051,26 @@ class CameraManager: NSObject, ObservableObject {
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
         )
 
-        var name: CFString?
         var dataSize = UInt32(MemoryLayout<CFString?>.size)
+        var name: Unmanaged<CFString>?
 
-        let status = CMIOObjectGetPropertyData(
-            deviceID,
-            &nameAddress,
-            0,
-            nil,
-            dataSize,
-            &dataSize,
-            &name
-        )
+        let status = withUnsafeMutablePointer(to: &name) { namePtr in
+            CMIOObjectGetPropertyData(
+                deviceID,
+                &nameAddress,
+                0,
+                nil,
+                dataSize,
+                &dataSize,
+                namePtr
+            )
+        }
 
-        guard status == noErr, let deviceName = name else {
+        guard status == noErr, let unmanagedName = name else {
             return nil
         }
 
-        return deviceName as String
+        return unmanagedName.takeUnretainedValue() as String
     }
 
     private func findSinkStream(for deviceID: CMIODeviceID) {
