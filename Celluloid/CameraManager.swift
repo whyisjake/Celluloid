@@ -214,6 +214,9 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var selectedFilter: FilterType = .none {
         didSet { saveSettings() }
     }
+    @MainActor @Published var filterStrength: Double = 0.5 {  // 0.0 to 1.0
+        didSet { saveSettings() }
+    }
 
     // LUT support
     @MainActor @Published var availableLUTs: [LUTInfo] = []
@@ -246,6 +249,7 @@ class CameraManager: NSObject, ObservableObject {
         static let temperature = "celluloid.temperature"
         static let sharpness = "celluloid.sharpness"
         static let filter = "celluloid.filter"
+        static let filterStrength = "celluloid.filterStrength"
         static let selectedCameraID = "celluloid.selectedCameraID"
         static let selectedLUT = "celluloid.selectedLUT"
         static let zoomLevel = "celluloid.zoomLevel"
@@ -281,6 +285,7 @@ class CameraManager: NSObject, ObservableObject {
 
     enum FilterType: String, CaseIterable, Identifiable, Sendable {
         case none = "None"
+        case skinSmooth = "Skin Smooth"
         case blackMist = "Black Mist"
         case gateWeave = "Gate Weave"
         case halation = "Halation"
@@ -297,7 +302,7 @@ class CameraManager: NSObject, ObservableObject {
 
         var ciFilterName: String? {
             switch self {
-            case .none, .blackMist, .gateWeave, .halation: return nil  // These are handled specially
+            case .none, .skinSmooth, .blackMist, .gateWeave, .halation: return nil  // These are handled specially
             case .noir: return "CIPhotoEffectNoir"
             case .chrome: return "CIPhotoEffectChrome"
             case .fade: return "CIPhotoEffectFade"
@@ -411,6 +416,9 @@ class CameraManager: NSObject, ObservableObject {
            let filter = FilterType(rawValue: filterName) {
             selectedFilter = filter
         }
+        if defaults.object(forKey: SettingsKey.filterStrength) != nil {
+            filterStrength = defaults.double(forKey: SettingsKey.filterStrength)
+        }
         if let lutName = defaults.string(forKey: SettingsKey.selectedLUT) {
             selectedLUT = lutName
         }
@@ -431,6 +439,7 @@ class CameraManager: NSObject, ObservableObject {
         defaults.set(cropOffsetX, forKey: SettingsKey.cropOffsetX)
         defaults.set(cropOffsetY, forKey: SettingsKey.cropOffsetY)
         defaults.set(selectedFilter.rawValue, forKey: SettingsKey.filter)
+        defaults.set(filterStrength, forKey: SettingsKey.filterStrength)
         defaults.set(selectedLUT, forKey: SettingsKey.selectedLUT)
     }
 
@@ -899,10 +908,21 @@ class CameraManager: NSObject, ObservableObject {
             }
         }
 
+        // Apply Skin Smooth filter
+        if selectedFilter == .skinSmooth {
+            let skinSmooth = SkinSmoothFilter()
+            skinSmooth.inputImage = outputImage
+            skinSmooth.inputStrength = filterStrength
+            if let result = skinSmooth.outputImage {
+                outputImage = result
+            }
+        }
+
         // Apply Black Mist filter using custom filter class
         if selectedFilter == .blackMist {
             let blackMist = BlackMistFilter()
             blackMist.inputImage = outputImage
+            blackMist.inputStrength = filterStrength
             if let result = blackMist.outputImage {
                 outputImage = result
             }
@@ -912,6 +932,7 @@ class CameraManager: NSObject, ObservableObject {
         if selectedFilter == .gateWeave {
             let gateWeave = GateWeaveFilter()
             gateWeave.inputImage = outputImage
+            gateWeave.inputStrength = filterStrength
             if let result = gateWeave.outputImage {
                 outputImage = result
             }
@@ -921,6 +942,7 @@ class CameraManager: NSObject, ObservableObject {
         if selectedFilter == .halation {
             let halation = HalationFilter()
             halation.inputImage = outputImage
+            halation.inputIntensity = filterStrength
             if let result = halation.outputImage {
                 outputImage = result
             }

@@ -383,6 +383,17 @@ struct FiltersSection: View {
                     }
                 }
             }
+
+            // Show strength slider when a filter is active
+            if cameraManager.selectedFilter != .none {
+                AdjustmentSlider(
+                    title: "Strength",
+                    value: $cameraManager.filterStrength,
+                    range: 0.0...1.0,
+                    icon: "slider.horizontal.3"
+                )
+                .padding(.top, 4)
+            }
         }
     }
 }
