@@ -193,6 +193,9 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor @Published var sharpness: Double = 0.0 {    // 0.0 to 2.0
         didSet { saveSettingsDebounced() }
     }
+    @MainActor @Published var vignette: Double = 0.0 {     // 0.0 to 1.0
+        didSet { saveSettingsDebounced() }
+    }
 
     // Zoom and crop controls (persisted with debouncing)
     @MainActor @Published var zoomLevel: Double = 1.0 {    // 1.0 to 4.0
@@ -245,6 +248,7 @@ class CameraManager: NSObject, ObservableObject {
         static let exposure = "celluloid.exposure"
         static let temperature = "celluloid.temperature"
         static let sharpness = "celluloid.sharpness"
+        static let vignette = "celluloid.vignette"
         static let filter = "celluloid.filter"
         static let selectedCameraID = "celluloid.selectedCameraID"
         static let selectedLUT = "celluloid.selectedLUT"
@@ -398,6 +402,9 @@ class CameraManager: NSObject, ObservableObject {
         if defaults.object(forKey: SettingsKey.sharpness) != nil {
             sharpness = defaults.double(forKey: SettingsKey.sharpness)
         }
+        if defaults.object(forKey: SettingsKey.vignette) != nil {
+            vignette = defaults.double(forKey: SettingsKey.vignette)
+        }
         if defaults.object(forKey: SettingsKey.zoomLevel) != nil {
             zoomLevel = defaults.double(forKey: SettingsKey.zoomLevel)
         }
@@ -427,6 +434,7 @@ class CameraManager: NSObject, ObservableObject {
         defaults.set(exposure, forKey: SettingsKey.exposure)
         defaults.set(temperature, forKey: SettingsKey.temperature)
         defaults.set(sharpness, forKey: SettingsKey.sharpness)
+        defaults.set(vignette, forKey: SettingsKey.vignette)
         defaults.set(zoomLevel, forKey: SettingsKey.zoomLevel)
         defaults.set(cropOffsetX, forKey: SettingsKey.cropOffsetX)
         defaults.set(cropOffsetY, forKey: SettingsKey.cropOffsetY)
@@ -621,6 +629,7 @@ class CameraManager: NSObject, ObservableObject {
         exposure = 0.0
         temperature = 6500
         sharpness = 0.0
+        vignette = 0.0
         zoomLevel = 1.0
         cropOffsetX = 0.0
         cropOffsetY = 0.0
@@ -899,6 +908,18 @@ class CameraManager: NSObject, ObservableObject {
                 sharpenFilter.setValue(outputImage, forKey: kCIInputImageKey)
                 sharpenFilter.setValue(sharpness, forKey: kCIInputSharpnessKey)
                 if let result = sharpenFilter.outputImage {
+                    outputImage = result
+                }
+            }
+        }
+
+        // Apply vignette effect
+        if vignette > 0 {
+            if let vignetteFilter = CIFilter(name: "CIVignette") {
+                vignetteFilter.setValue(outputImage, forKey: kCIInputImageKey)
+                vignetteFilter.setValue(vignette * 2.0, forKey: kCIInputIntensityKey)  // Scale 0-1 to 0-2
+                vignetteFilter.setValue(1.0, forKey: kCIInputRadiusKey)
+                if let result = vignetteFilter.outputImage {
                     outputImage = result
                 }
             }

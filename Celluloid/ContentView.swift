@@ -331,6 +331,13 @@ struct AdjustmentsSection: View {
                 range: 0.0...2.0,
                 icon: "triangle"
             )
+
+            AdjustmentSlider(
+                title: "Vignette",
+                value: $cameraManager.vignette,
+                range: 0.0...1.0,
+                icon: "circle.dashed"
+            )
         }
     }
 }
