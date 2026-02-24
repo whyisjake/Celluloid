@@ -6,10 +6,12 @@
 //
 
 import SwiftUI
+import ServiceManagement
 
 struct ContentView: View {
     @EnvironmentObject var cameraManager: CameraManager
     @ObservedObject var extensionManager = ExtensionManager.shared
+    @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
 
     var body: some View {
         VStack(spacing: 0) {
@@ -119,6 +121,23 @@ struct ContentView: View {
                         Label("Reset All", systemImage: "arrow.counterclockwise")
                     }
                     .buttonStyle(.bordered)
+
+                    Spacer()
+
+                    Toggle("Launch at Login", isOn: $launchAtLogin)
+                        .toggleStyle(.checkbox)
+                        .font(.caption)
+                        .onChange(of: launchAtLogin) { _, newValue in
+                            do {
+                                if newValue {
+                                    try SMAppService.mainApp.register()
+                                } else {
+                                    try SMAppService.mainApp.unregister()
+                                }
+                            } catch {
+                                launchAtLogin = !newValue
+                            }
+                        }
 
                     Spacer()
 
