@@ -174,33 +174,33 @@ class CameraManager: NSObject, ObservableObject {
     @MainActor private var previewWindowIsOpen = false
     @MainActor private var externalAppIsStreaming = false
 
-    // Adjustment controls (persisted)
+    // Adjustment controls (persisted with debouncing for slider drags)
     @MainActor @Published var brightness: Double = 0.0 {  // -1.0 to 1.0
-        didSet { saveSettings() }
+        didSet { saveSettingsDebounced() }
     }
     @MainActor @Published var contrast: Double = 1.0 {    // 0.25 to 4.0
-        didSet { saveSettings() }
+        didSet { saveSettingsDebounced() }
     }
     @MainActor @Published var saturation: Double = 1.0 {  // 0.0 to 2.0
-        didSet { saveSettings() }
+        didSet { saveSettingsDebounced() }
     }
     @MainActor @Published var exposure: Double = 0.0 {    // -2.0 to 2.0
-        didSet { saveSettings() }
+        didSet { saveSettingsDebounced() }
     }
     @MainActor @Published var temperature: Double = 6500 { // 2000 to 10000 (Kelvin)
-        didSet { saveSettings() }
+        didSet { saveSettingsDebounced() }
     }
     @MainActor @Published var sharpness: Double = 0.0 {    // 0.0 to 2.0
-        didSet { saveSettings() }
+        didSet { saveSettingsDebounced() }
     }
-    
-    // Zoom and crop controls (persisted)
+
+    // Zoom and crop controls (persisted with debouncing)
     @MainActor @Published var zoomLevel: Double = 1.0 {    // 1.0 to 4.0
         didSet {
             // Clamp crop position to valid range (-1 to 1)
             cropOffsetX = max(-1.0, min(1.0, cropOffsetX))
             cropOffsetY = max(-1.0, min(1.0, cropOffsetY))
-            saveSettings()
+            saveSettingsDebounced()
         }
     }
     @MainActor @Published var cropOffsetX: Double = 0.0 {  // -1.0 to 1.0 (normalized)
@@ -812,46 +812,51 @@ class CameraManager: NSObject, ObservableObject {
         }
     }
 
+    /// Apply zoom and crop to an already-filtered image
     @MainActor
-    private func applyFilters(to image: CIImage, applyZoom: Bool = true) -> CIImage {
+    private func applyZoomAndCrop(to image: CIImage) -> CIImage {
+        guard zoomLevel > 1.0 else { return image }
+
         var outputImage = image
+        let imageWidth = outputImage.extent.width
+        let imageHeight = outputImage.extent.height
 
-        // Apply zoom and crop FIRST (before any other filters)
-        // Only apply if applyZoom is true (for output, not preview)
-        if applyZoom && zoomLevel > 1.0 {
-            // Calculate the crop rect based on zoom level and crop offsets
-            let imageWidth = outputImage.extent.width
-            let imageHeight = outputImage.extent.height
+        // The visible area is 1/zoomLevel of the original
+        let croppedWidth = imageWidth / zoomLevel
+        let croppedHeight = imageHeight / zoomLevel
 
-            // The visible area is 1/zoomLevel of the original
-            let croppedWidth = imageWidth / zoomLevel
-            let croppedHeight = imageHeight / zoomLevel
+        // Calculate center position with offsets
+        // Offsets are normalized (-1 to 1), convert to pixel space
+        let maxOffsetX = (imageWidth - croppedWidth) / 2
+        let maxOffsetY = (imageHeight - croppedHeight) / 2
+        let centerX = imageWidth / 2 + cropOffsetX * maxOffsetX
+        // Negate cropOffsetY because CIImage has Y=0 at bottom, but UI has Y=0 at top
+        let centerY = imageHeight / 2 - cropOffsetY * maxOffsetY
 
-            // Calculate center position with offsets
-            // Offsets are normalized (-1 to 1), convert to pixel space
-            let maxOffsetX = (imageWidth - croppedWidth) / 2
-            let maxOffsetY = (imageHeight - croppedHeight) / 2
-            let centerX = imageWidth / 2 + cropOffsetX * maxOffsetX
-            // Negate cropOffsetY because CIImage has Y=0 at bottom, but UI has Y=0 at top
-            let centerY = imageHeight / 2 - cropOffsetY * maxOffsetY
+        // Calculate crop rectangle
+        let cropX = centerX - croppedWidth / 2
+        let cropY = centerY - croppedHeight / 2
+        let cropRect = CGRect(x: cropX, y: cropY, width: croppedWidth, height: croppedHeight)
 
-            // Calculate crop rectangle
-            let cropX = centerX - croppedWidth / 2
-            let cropY = centerY - croppedHeight / 2
-            let cropRect = CGRect(x: cropX, y: cropY, width: croppedWidth, height: croppedHeight)
+        // Crop to the desired area
+        outputImage = outputImage.cropped(to: cropRect)
 
-            // Crop to the desired area
-            outputImage = outputImage.cropped(to: cropRect)
+        // After cropping, the image extent is still at (cropX, cropY)
+        // We need to translate it to origin (0,0) before scaling
+        outputImage = outputImage.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
 
-            // After cropping, the image extent is still at (cropX, cropY)
-            // We need to translate it to origin (0,0) before scaling
-            outputImage = outputImage.transformed(by: CGAffineTransform(translationX: -cropX, y: -cropY))
+        // Scale back to original size (this creates the zoom effect)
+        let scaleX = imageWidth / croppedWidth
+        let scaleY = imageHeight / croppedHeight
+        outputImage = outputImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
 
-            // Scale back to original size (this creates the zoom effect)
-            let scaleX = imageWidth / croppedWidth
-            let scaleY = imageHeight / croppedHeight
-            outputImage = outputImage.transformed(by: CGAffineTransform(scaleX: scaleX, y: scaleY))
-        }
+        return outputImage
+    }
+
+    /// Apply color filters only (no zoom) - call once per frame
+    @MainActor
+    private func applyColorFilters(to image: CIImage) -> CIImage {
+        var outputImage = image
 
         // Apply color controls (brightness, contrast, saturation)
         if let colorControls = CIFilter(name: "CIColorControls") {
@@ -1236,11 +1241,14 @@ extension CameraManager: AVCaptureVideoDataOutputSampleBufferDelegate {
         Task { @MainActor [weak self] in
             guard let self = self else { return }
 
-            // Process for PREVIEW (no zoom - shows full frame with crop overlay)
-            let previewImage = self.applyFilters(to: ciImage, applyZoom: false)
+            // Apply color filters ONCE (shared between preview and output)
+            let filteredImage = self.applyColorFilters(to: ciImage)
 
-            // Process for OUTPUT (with zoom - what goes to virtual camera)
-            let outputImage = self.applyFilters(to: ciImage, applyZoom: true)
+            // Preview uses filtered image without zoom (shows full frame with crop overlay)
+            let previewImage = filteredImage
+
+            // Output applies zoom/crop on top of the filtered image
+            let outputImage = self.applyZoomAndCrop(to: filteredImage)
 
             let outputWidth = CGFloat(CelluloidShared.width)
             let outputHeight = CGFloat(CelluloidShared.height)

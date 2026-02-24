@@ -40,9 +40,9 @@ class ExtensionManager: NSObject, ObservableObject, OSSystemExtensionRequestDele
         statusCheckTimer?.invalidate()
     }
 
-    /// Start polling for extension status changes (checks every 3 seconds when extension needs enabling)
+    /// Start polling for extension status changes (checks every 10 seconds when extension needs enabling)
     private func startStatusPolling() {
-        statusCheckTimer = Timer.scheduledTimer(withTimeInterval: 3.0, repeats: true) { [weak self] _ in
+        statusCheckTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             guard let self = self else { return }
             // Only poll frequently if extension needs user action
             if self.needsCameraExtensionEnabled || !self.isInstalled {
